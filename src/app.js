@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 
-const authenticate = require('./middleware/authenticate');
+const userRoutes = require('./modules/users/user.routes');
 
 const app = express();
 
@@ -14,5 +14,7 @@ app.get('/api/health', (req, res) => {
     message: 'VPay backend is running',
   });
 });
+
+app.use('/api', userRoutes);
 
 module.exports = app;
