@@ -11,9 +11,58 @@ const BOOTSTRAP_OUTCOMES = {
   ROLE_CONFLICT: 'ROLE_CONFLICT',
 };
 
-async function bootstrapUser({ uid, email, name, role }) {
+function isMissingOnboardingField(value) {
+  return (
+    value === undefined ||
+    value === null ||
+    (typeof value === 'string' && value.trim() === '')
+  );
+}
+
+function buildBackfill(existingUser, profile) {
+  const backfill = {};
+  const commonFields = ['name', 'phone'];
+  const merchantFields = [
+    'businessName',
+    'businessCategory',
+    'businessAddress',
+  ];
+  const fields =
+    profile.role === 'MERCHANT'
+      ? [...commonFields, ...merchantFields]
+      : commonFields;
+
+  for (const field of fields) {
+    if (isMissingOnboardingField(existingUser[field])) {
+      backfill[field] = profile[field];
+    }
+  }
+
+  return backfill;
+}
+
+async function bootstrapUser({
+  uid,
+  email,
+  name,
+  phone,
+  role,
+  businessName,
+  businessCategory,
+  businessAddress,
+}) {
   const userRef = db.collection('users').doc(uid);
   const cardRef = db.collection('cards').doc(uid);
+  const profile = {
+    name,
+    phone,
+    role,
+    ...(role === 'MERCHANT' && {
+      businessName,
+      businessCategory,
+      businessAddress,
+    }),
+  };
 
   const transactionResult = await db.runTransaction(
     async (transaction) => {
@@ -34,18 +83,22 @@ async function bootstrapUser({ uid, email, name, role }) {
         cardSnapshot = await transaction.get(cardRef);
       }
 
-      let created = false;
+      const profileCreated = !existingUser;
 
       if (!existingUser) {
         transaction.set(userRef, {
-          name,
+          ...profile,
           email,
-          role,
           status: 'ACTIVE',
           createdAt: FieldValue.serverTimestamp(),
           fcmToken: null,
         });
-        created = true;
+      } else {
+        const backfill = buildBackfill(existingUser, profile);
+
+        if (Object.keys(backfill).length > 0) {
+          transaction.update(userRef, backfill);
+        }
       }
 
       if (role === 'CUSTOMER' && !cardSnapshot.exists) {
@@ -53,11 +106,10 @@ async function bootstrapUser({ uid, email, name, role }) {
           cardRef,
           createInitialVirtualCardData(uid)
         );
-        created = true;
       }
 
       return {
-        outcome: created
+        outcome: profileCreated
           ? BOOTSTRAP_OUTCOMES.CREATED
           : BOOTSTRAP_OUTCOMES.EXISTING,
       };

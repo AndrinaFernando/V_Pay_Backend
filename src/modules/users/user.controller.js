@@ -3,8 +3,7 @@ const {
   bootstrapUser,
   getUserByUid,
 } = require('./user.service');
-
-const ALLOWED_ROLES = new Set(['CUSTOMER', 'MERCHANT']);
+const { validateBootstrapInput } = require('./user.validation');
 
 async function bootstrap(req, res) {
   try {
@@ -17,27 +16,19 @@ async function bootstrap(req, res) {
       });
     }
 
-    const { name, role } = req.body || {};
+    const validation = validateBootstrapInput(req.body);
 
-    if (typeof name !== 'string' || name.trim() === '') {
+    if (validation.error) {
       return res.status(400).json({
         success: false,
-        message: 'Name must be a non-empty string',
-      });
-    }
-
-    if (!ALLOWED_ROLES.has(role)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Role must be either CUSTOMER or MERCHANT',
+        message: validation.error,
       });
     }
 
     const result = await bootstrapUser({
       uid,
       email,
-      name: name.trim(),
-      role,
+      ...validation.value,
     });
 
     if (result.outcome === BOOTSTRAP_OUTCOMES.ROLE_CONFLICT) {
