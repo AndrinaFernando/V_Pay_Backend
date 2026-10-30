@@ -1,1 +1,10 @@
-// Future card routes will define card retrieval, freeze, and unfreeze endpoints.
+const express = require('express');
+
+const authenticate = require('../../middleware/authenticate');
+const { getCard } = require('./card.controller');
+
+const router = express.Router();
+
+router.get('/card', authenticate, getCard);
+
+module.exports = router;
