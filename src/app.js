@@ -3,6 +3,7 @@ const cors = require('cors');
 
 const userRoutes = require('./modules/users/user.routes');
 const cardRoutes = require('./modules/cards/card.routes');
+const paymentRoutes = require('./modules/payments/payment.routes');
 
 const app = express();
 
@@ -18,5 +19,6 @@ app.get('/api/health', (req, res) => {
 
 app.use('/api', userRoutes);
 app.use('/api', cardRoutes);
+app.use('/api', paymentRoutes);
 
 module.exports = app;
