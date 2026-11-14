@@ -2,10 +2,11 @@ const {
   PAYMENT_INTENT_OUTCOMES,
   createPaymentIntent,
   getPaymentIntent,
+  previewPaymentIntent,
 } = require('./payment.service');
 const { validateCreatePaymentIntentInput } = require('./payment.validation');
 
-function sendServiceError(res, outcome) {
+function sendServiceError(res, outcome, accountType = 'merchant') {
   if (outcome === PAYMENT_INTENT_OUTCOMES.PROFILE_NOT_FOUND) {
     return res.status(404).json({
       success: false,
@@ -14,9 +15,13 @@ function sendServiceError(res, outcome) {
   }
 
   if (outcome === PAYMENT_INTENT_OUTCOMES.ROLE_FORBIDDEN) {
+    const message = accountType === 'customer'
+      ? 'Only active customer accounts can preview payment intents'
+      : 'Only active merchant accounts can access payment intents';
+
     return res.status(403).json({
       success: false,
-      message: 'Only active merchant accounts can access payment intents',
+      message,
     });
   }
 
@@ -27,7 +32,10 @@ function sendServiceError(res, outcome) {
     });
   }
 
-  return null;
+  return res.status(500).json({
+  success: false,
+  message: 'Unable to process payment intent request',
+});
 }
 
 async function create(req, res) {
@@ -98,4 +106,34 @@ async function getByReference(req, res) {
   }
 }
 
-module.exports = { create, getByReference };
+async function previewByReference(req, res) {
+  if (req.user.emailVerified !== true) {
+    return res.status(403).json({
+      success: false,
+      message: 'Email verification is required',
+    });
+  }
+
+  try {
+    const result = await previewPaymentIntent({
+      uid: req.user.uid,
+      paymentReference: req.params.paymentReference,
+    });
+    if (result.outcome !== PAYMENT_INTENT_OUTCOMES.FOUND) {
+      return sendServiceError(res, result.outcome, 'customer');
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: { paymentIntent: result.paymentIntent },
+    });
+  } catch (error) {
+    console.error('Payment intent preview failed:', error.message);
+    return res.status(500).json({
+      success: false,
+      message: 'Unable to preview payment intent',
+    });
+  }
+}
+
+module.exports = { create, getByReference, previewByReference };

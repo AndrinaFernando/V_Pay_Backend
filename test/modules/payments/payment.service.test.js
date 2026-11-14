@@ -82,6 +82,12 @@ const merchant = {
   businessName: 'Test Merchant',
 };
 
+const customer = {
+  role: 'CUSTOMER',
+  status: 'ACTIVE',
+  name: 'Test Customer',
+};
+
 test('creates a pending intent without reading or writing balances', async () => {
   const now = new Date('2026-11-13T10:00:00.000Z');
   const { db, collections, collectionAccesses, writesRecorded } = makeFakeDb({
@@ -293,4 +299,207 @@ test('does not expire an intent that is already successful', async () => {
     collections.paymentIntents.get('ref1').status,
     PAYMENT_INTENT_STATUS.SUCCESS
   );
+});
+
+test('previews a pending intent for an active customer using only public fields', async () => {
+  const { db, collectionAccesses, writesRecorded } = makeFakeDb({
+    users: { customer1: customer },
+    intents: {
+      ref1: {
+        merchantUid: 'merchant1',
+        merchantName: 'Test Merchant',
+        merchantBankAccount: 'private-account',
+        amountMinor: 125000,
+        currency: 'LKR',
+        status: PAYMENT_INTENT_STATUS.PENDING,
+        createdAt: new Date('2026-11-13T10:00:00.000Z'),
+        expiresAt: new Date('2026-11-13T10:15:00.000Z'),
+        description: 'Order 123',
+        internalMetadata: { riskScore: 10 },
+      },
+    },
+  });
+  const service = createPaymentService({
+    db,
+    clock: () => new Date('2026-11-13T10:01:00.000Z'),
+  });
+
+  const result = await service.previewPaymentIntent({
+    uid: 'customer1',
+    paymentReference: 'ref1',
+  });
+
+  assert.equal(result.outcome, PAYMENT_INTENT_OUTCOMES.FOUND);
+  assert.deepEqual(result.paymentIntent, {
+    paymentReference: 'ref1',
+    merchantName: 'Test Merchant',
+    amountMinor: 125000,
+    currency: 'LKR',
+    status: PAYMENT_INTENT_STATUS.PENDING,
+    createdAt: '2026-11-13T10:00:00.000Z',
+    expiresAt: '2026-11-13T10:15:00.000Z',
+    description: 'Order 123',
+  });
+  assert.deepEqual([...new Set(collectionAccesses)].sort(), [
+    'paymentIntents',
+    'users',
+  ]);
+  assert.deepEqual(writesRecorded, []);
+});
+
+test('uses backend time to expire an overdue pending intent during preview', async () => {
+  const { db, collections, writesRecorded } = makeFakeDb({
+    users: { customer1: customer },
+    intents: {
+      ref1: {
+        merchantUid: 'merchant1',
+        merchantName: 'Test Merchant',
+        amountMinor: 100,
+        currency: 'LKR',
+        status: PAYMENT_INTENT_STATUS.PENDING,
+        createdAt: new Date('2026-11-13T10:00:00.000Z'),
+        expiresAt: new Date('2026-11-13T10:15:00.000Z'),
+      },
+    },
+  });
+  const service = createPaymentService({
+    db,
+    clock: () => new Date('2026-11-13T10:15:00.000Z'),
+  });
+
+  const result = await service.previewPaymentIntent({
+    uid: 'customer1',
+    paymentReference: 'ref1',
+  });
+
+  assert.equal(result.paymentIntent.status, PAYMENT_INTENT_STATUS.EXPIRED);
+  assert.equal(
+    collections.paymentIntents.get('ref1').status,
+    PAYMENT_INTENT_STATUS.EXPIRED,
+  );
+  assert.deepEqual(
+    writesRecorded.map(({ type, ref, data }) => ({
+      type,
+      collectionName: ref.collectionName,
+      data,
+    })),
+    [{
+      type: 'update',
+      collectionName: 'paymentIntents',
+      data: { status: PAYMENT_INTENT_STATUS.EXPIRED },
+    }],
+  );
+});
+
+test('preserves processing, successful, and failed statuses during preview', async () => {
+  const statuses = [
+    PAYMENT_INTENT_STATUS.PROCESSING,
+    PAYMENT_INTENT_STATUS.SUCCESS,
+    PAYMENT_INTENT_STATUS.FAILED,
+  ];
+  const intents = Object.fromEntries(statuses.map((status) => [
+    status.toLowerCase(),
+    {
+      merchantUid: 'merchant1',
+      merchantName: 'Test Merchant',
+      amountMinor: 100,
+      currency: 'LKR',
+      status,
+      createdAt: new Date('2026-11-13T10:00:00.000Z'),
+      expiresAt: new Date('2026-11-13T10:01:00.000Z'),
+      ...(status === PAYMENT_INTENT_STATUS.SUCCESS && {
+        paidAt: new Date('2026-11-13T10:00:30.000Z'),
+      }),
+    },
+  ]));
+  const { db, writesRecorded } = makeFakeDb({
+    users: { customer1: customer },
+    intents,
+  });
+  const service = createPaymentService({
+    db,
+    clock: () => new Date('2026-11-13T10:15:00.000Z'),
+  });
+
+  for (const status of statuses) {
+    const result = await service.previewPaymentIntent({
+      uid: 'customer1',
+      paymentReference: status.toLowerCase(),
+    });
+    assert.equal(result.outcome, PAYMENT_INTENT_OUTCOMES.FOUND);
+    assert.equal(result.paymentIntent.status, status);
+    if (status === PAYMENT_INTENT_STATUS.SUCCESS) {
+      assert.equal(result.paymentIntent.paidAt, '2026-11-13T10:00:30.000Z');
+    }
+  }
+  assert.deepEqual(writesRecorded, []);
+});
+
+test('returns not found safely for unknown and malformed preview references', async () => {
+  const { db } = makeFakeDb({ users: { customer1: customer } });
+  const service = createPaymentService({ db });
+
+  const references = [
+    'unknown-reference',
+    '',
+    'invalid/reference',
+    'x'.repeat(129),
+    undefined,
+  ];
+  for (const paymentReference of references) {
+    const result = await service.previewPaymentIntent({
+      uid: 'customer1',
+      paymentReference,
+    });
+    assert.equal(result.outcome, PAYMENT_INTENT_OUTCOMES.NOT_FOUND);
+  }
+});
+
+test('rejects merchants, inactive customers, and missing profiles from preview', async () => {
+  const { db, collectionAccesses } = makeFakeDb({
+    users: {
+      merchant1: merchant,
+      inactiveCustomer: { ...customer, status: 'DISABLED' },
+    },
+  });
+  const service = createPaymentService({ db });
+
+  for (const uid of ['merchant1', 'inactiveCustomer']) {
+    const result = await service.previewPaymentIntent({
+      uid,
+      paymentReference: 'ref1',
+    });
+    assert.equal(result.outcome, PAYMENT_INTENT_OUTCOMES.ROLE_FORBIDDEN);
+  }
+  const missing = await service.previewPaymentIntent({
+    uid: 'missing-customer',
+    paymentReference: 'ref1',
+  });
+  assert.equal(missing.outcome, PAYMENT_INTENT_OUTCOMES.PROFILE_NOT_FOUND);
+  assert.deepEqual([...new Set(collectionAccesses)], ['users']);
+});
+
+test('keeps the original merchant lookup restricted to active merchants', async () => {
+  const { db } = makeFakeDb({
+    users: { customer1: customer },
+    intents: {
+      ref1: {
+        merchantUid: 'merchant1',
+        merchantName: 'Test Merchant',
+        amountMinor: 100,
+        currency: 'LKR',
+        status: PAYMENT_INTENT_STATUS.PENDING,
+        createdAt: new Date('2026-11-13T10:00:00.000Z'),
+        expiresAt: new Date('2026-11-13T10:15:00.000Z'),
+      },
+    },
+  });
+  const service = createPaymentService({ db });
+
+  const result = await service.getPaymentIntent({
+    uid: 'customer1',
+    paymentReference: 'ref1',
+  });
+
+  assert.equal(result.outcome, PAYMENT_INTENT_OUTCOMES.ROLE_FORBIDDEN);
 });

@@ -94,16 +94,34 @@ function createPaymentService({ db, clock = () => new Date() }) {
     };
   }
 
-  async function getPaymentIntent({ uid, paymentReference }) {
-    const merchantResult = await getMerchant(uid);
-    if (merchantResult.outcome) return merchantResult;
+  async function getCustomer(uid) {
+    const snapshot = await db.collection('users').doc(uid).get();
+    if (!snapshot.exists) {
+      return { outcome: PAYMENT_INTENT_OUTCOMES.PROFILE_NOT_FOUND };
+    }
 
-    if (
-      typeof paymentReference !== 'string' ||
-      paymentReference.length === 0 ||
-      paymentReference.length > 128 ||
-      paymentReference.includes('/')
-    ) {
+    const customer = snapshot.data();
+    if (customer.role !== 'CUSTOMER' || customer.status !== 'ACTIVE') {
+      return {
+        outcome: PAYMENT_INTENT_OUTCOMES.ROLE_FORBIDDEN,
+        role: customer.role,
+      };
+    }
+
+    return { customer };
+  }
+
+  function isValidPaymentReference(paymentReference) {
+    return (
+      typeof paymentReference === 'string' &&
+      paymentReference.length > 0 &&
+      paymentReference.length <= 128 &&
+      !paymentReference.includes('/')
+    );
+  }
+
+  async function findPaymentIntent({ paymentReference, merchantUid }) {
+    if (!isValidPaymentReference(paymentReference)) {
       return { outcome: PAYMENT_INTENT_OUTCOMES.NOT_FOUND };
     }
 
@@ -116,7 +134,7 @@ function createPaymentService({ db, clock = () => new Date() }) {
       }
 
       const data = snapshot.data();
-      if (data.merchantUid !== uid) {
+      if (merchantUid !== undefined && data.merchantUid !== merchantUid) {
         return { outcome: PAYMENT_INTENT_OUTCOMES.NOT_FOUND };
       }
 
@@ -143,7 +161,21 @@ function createPaymentService({ db, clock = () => new Date() }) {
     });
   }
 
-  return { createPaymentIntent, getPaymentIntent };
+  async function getPaymentIntent({ uid, paymentReference }) {
+    const merchantResult = await getMerchant(uid);
+    if (merchantResult.outcome) return merchantResult;
+
+    return findPaymentIntent({ paymentReference, merchantUid: uid });
+  }
+
+  async function previewPaymentIntent({ uid, paymentReference }) {
+    const customerResult = await getCustomer(uid);
+    if (customerResult.outcome) return customerResult;
+
+    return findPaymentIntent({ paymentReference });
+  }
+
+  return { createPaymentIntent, getPaymentIntent, previewPaymentIntent };
 }
 
 function getDefaultService() {
@@ -159,10 +191,15 @@ async function getPaymentIntent(input) {
   return getDefaultService().getPaymentIntent(input);
 }
 
+async function previewPaymentIntent(input) {
+  return getDefaultService().previewPaymentIntent(input);
+}
+
 module.exports = {
   PAYMENT_INTENT_OUTCOMES,
   PAYMENT_INTENT_STATUS,
   createPaymentIntent,
   createPaymentService,
   getPaymentIntent,
+  previewPaymentIntent,
 };
