@@ -8,6 +8,7 @@ const {
   MAX_EXPIRY_SECONDS,
   MAX_LIST_LIMIT,
   MIN_EXPIRY_SECONDS,
+  validateConfirmPaymentIntentInput,
   validateCreatePaymentIntentInput,
   validateListPaymentIntentsQuery,
 } = require('../../../src/modules/payments/payment.validation');
@@ -109,5 +110,29 @@ test('validates recent-intent list limit and applies its default', () => {
 
   for (const limit of ['0', '-1', '1.5', 'abc', String(MAX_LIST_LIMIT + 1)]) {
     assert.match(validateListPaymentIntentsQuery({ limit }).error, /limit/);
+  }
+});
+
+test('supports an omitted or empty confirmation body and rejects explicit null', () => {
+  assert.deepEqual(validateConfirmPaymentIntentInput(undefined), {
+    value: {},
+  });
+  assert.deepEqual(validateConfirmPaymentIntentInput({}), {
+    value: {},
+  });
+  assert.match(
+    validateConfirmPaymentIntentInput(null).error,
+    /empty JSON object/,
+  );
+
+  for (const body of [
+    { amountMinor: 100 },
+    { currency: 'LKR' },
+    { merchantUid: 'merchant1' },
+    { customerUid: 'customer1' },
+    { status: 'SUCCESS' },
+    [],
+  ]) {
+    assert.match(validateConfirmPaymentIntentInput(body).error, /body|payment data/);
   }
 });
