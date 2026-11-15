@@ -142,6 +142,32 @@ function isConsistentQrTransaction(
   );
 }
 
+function toPublicCustomerTransaction(
+  transactionId,
+  transactionRecord,
+  paymentIntent
+) {
+  const merchantName = paymentIntent.merchantName;
+  const createdAt = toIsoString(transactionRecord.createdAt);
+  if (
+    typeof merchantName !== 'string' ||
+    merchantName.trim().length === 0 ||
+    !createdAt
+  ) {
+    throw new Error('Invalid customer transaction record');
+  }
+
+  return {
+    transactionId,
+    paymentReference: transactionRecord.paymentReference,
+    merchantName: merchantName.trim(),
+    amountMinor: transactionRecord.amountMinor,
+    currency: transactionRecord.currency,
+    status: transactionRecord.status,
+    createdAt,
+  };
+}
+
 function createPaymentService({
   db,
   clock = () => new Date(),
@@ -213,6 +239,62 @@ function createPaymentService({
     }
 
     return { customer };
+  }
+
+  async function listCustomerTransactions({ uid, limit }) {
+    const customerResult = await getCustomer(uid);
+    if (customerResult.outcome) return customerResult;
+
+    const snapshot = await db
+      .collection('transactions')
+      .where('customerUid', '==', uid)
+      .orderBy('createdAt', 'desc')
+      .limit(limit)
+      .get();
+
+    const customerTransactions = await Promise.all(
+      snapshot.docs.map(async (document) => {
+        const transactionRecord = document.data();
+        const paymentReference = transactionRecord.paymentReference;
+        if (
+          typeof paymentReference !== 'string' ||
+          paymentReference.length === 0
+        ) {
+          throw new Error('Invalid customer transaction record');
+        }
+
+        const paymentIntentSnapshot = await db
+          .collection('paymentIntents')
+          .doc(paymentReference)
+          .get();
+        if (!paymentIntentSnapshot.exists) {
+          throw new Error('Customer transaction payment intent is missing');
+        }
+
+        const paymentIntent = paymentIntentSnapshot.data();
+        if (
+          !isConsistentQrTransaction(
+            transactionRecord,
+            paymentIntent,
+            paymentReference,
+            uid,
+          )
+        ) {
+          throw new Error('Customer transaction is inconsistent');
+        }
+
+        return toPublicCustomerTransaction(
+          document.id,
+          transactionRecord,
+          paymentIntent,
+        );
+      }),
+    );
+
+    return {
+      outcome: PAYMENT_INTENT_OUTCOMES.LISTED,
+      customerTransactions,
+    };
   }
 
   function isValidPaymentReference(paymentReference) {
@@ -740,6 +822,7 @@ function createPaymentService({
     createPaymentIntent,
     getPaymentIntent,
     getPaymentStatus,
+    listCustomerTransactions,
     listPaymentIntents,
     previewPaymentIntent,
   };
@@ -760,6 +843,10 @@ async function getPaymentIntent(input) {
 
 async function listPaymentIntents(input) {
   return getDefaultService().listPaymentIntents(input);
+}
+
+async function listCustomerTransactions(input) {
+  return getDefaultService().listCustomerTransactions(input);
 }
 
 async function previewPaymentIntent(input) {
@@ -784,6 +871,7 @@ module.exports = {
   createPaymentService,
   getPaymentIntent,
   getPaymentStatus,
+  listCustomerTransactions,
   listPaymentIntents,
   previewPaymentIntent,
 };

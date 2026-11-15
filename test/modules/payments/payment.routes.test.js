@@ -32,6 +32,10 @@ let listPaymentIntents = async () => ({
   outcome: 'LISTED',
   paymentIntents: [],
 });
+let listCustomerTransactions = async () => ({
+  outcome: 'LISTED',
+  customerTransactions: [],
+});
 let previewPaymentIntent = async () => ({
   outcome: 'FOUND',
   paymentIntent: { paymentReference: 'preview-reference' },
@@ -79,6 +83,7 @@ paymentServiceStub.exports = {
   createPaymentIntent: (...args) => createPaymentIntent(...args),
   getPaymentIntent: (...args) => getPaymentIntent(...args),
   getPaymentStatus: (...args) => getPaymentStatus(...args),
+  listCustomerTransactions: (...args) => listCustomerTransactions(...args),
   listPaymentIntents: (...args) => listPaymentIntents(...args),
   previewPaymentIntent: (...args) => previewPaymentIntent(...args),
 };
@@ -323,6 +328,37 @@ test('payment-status route returns the service response', async () => {
     paymentReference: 'status-reference',
     status: 'PENDING',
   });
+});
+
+test('customer transaction route derives ownership only from authentication', async () => {
+  verifyIdToken = async () => ({
+    uid: 'customer1',
+    email: 'customer@example.test',
+    email_verified: true,
+  });
+  listCustomerTransactions = async (input) => {
+    assert.deepEqual(input, { uid: 'customer1', limit: 7 });
+    return {
+      outcome: 'LISTED',
+      customerTransactions: [
+        {
+          transactionId: 'qr-payment--one',
+          merchantName: 'Test Merchant',
+        },
+      ],
+    };
+  };
+
+  const res = await invokeRoute('/customer/transactions', 'get', {
+    headers: { authorization: 'Bearer customer-token' },
+    query: { limit: '7', uid: 'another-customer' },
+  });
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(
+    res.body.data.transactions[0].transactionId,
+    'qr-payment--one',
+  );
 });
 
 test('original merchant create, lookup, and listing routes remain operational', async () => {

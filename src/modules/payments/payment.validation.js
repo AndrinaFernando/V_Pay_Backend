@@ -91,6 +91,10 @@ function validateListPaymentIntentsQuery(query) {
   return { value: { limit } };
 }
 
+function validateListCustomerTransactionsQuery(query) {
+  return validateListPaymentIntentsQuery(query);
+}
+
 function validateConfirmPaymentIntentInput(body) {
   // An omitted body is supported and is equivalent to an empty JSON object.
   if (body === undefined) {
@@ -118,5 +122,6 @@ module.exports = {
   PAYMENT_CURRENCY,
   validateConfirmPaymentIntentInput,
   validateCreatePaymentIntentInput,
+  validateListCustomerTransactionsQuery,
   validateListPaymentIntentsQuery,
 };

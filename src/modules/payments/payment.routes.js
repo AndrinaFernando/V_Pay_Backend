@@ -9,6 +9,7 @@ const {
   getByReference,
   getPaymentStatusByReference,
   list,
+  listCustomerTransactionHistory,
   previewByReference,
 } = require('./payment.controller');
 
@@ -20,6 +21,12 @@ router.get('/payment-intents', authenticate, list);
 router.get('/payment-intents/:paymentReference', authenticate, getByReference);
 
 // Customer payment operations
+router.get(
+  '/customer/transactions',
+  authenticate,
+  listCustomerTransactionHistory,
+);
+
 router.get(
   '/payment-intents/:paymentReference/preview',
   authenticate,

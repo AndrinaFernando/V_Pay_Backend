@@ -6,11 +6,13 @@ const {
   getPaymentIntent,
   listPaymentIntents,
   getPaymentStatus,
+  listCustomerTransactions,
   previewPaymentIntent,
 } = require('./payment.service');
 const {
   validateConfirmPaymentIntentInput,
   validateCreatePaymentIntentInput,
+  validateListCustomerTransactionsQuery,
   validateListPaymentIntentsQuery,
 } = require('./payment.validation');
 
@@ -259,6 +261,41 @@ async function previewByReference(req, res) {
   }
 }
 
+async function listCustomerTransactionHistory(req, res) {
+  if (req.user.emailVerified !== true) {
+    return res.status(403).json({
+      success: false,
+      message: 'Email verification is required',
+    });
+  }
+
+  const validation = validateListCustomerTransactionsQuery(req.query);
+  if (validation.error) {
+    return res.status(400).json({ success: false, message: validation.error });
+  }
+
+  try {
+    const result = await listCustomerTransactions({
+      uid: req.user.uid,
+      ...validation.value,
+    });
+    if (result.outcome !== PAYMENT_INTENT_OUTCOMES.LISTED) {
+      return sendServiceError(res, result.outcome, 'customer');
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: { transactions: result.customerTransactions },
+    });
+  } catch (error) {
+    console.error('Customer transaction listing failed:', error.message);
+    return res.status(500).json({
+      success: false,
+      message: 'Unable to retrieve customer transactions',
+    });
+  }
+}
+
 async function confirmByReference(req, res) {
   if (req.user.emailVerified !== true) {
     return res.status(403).json({
@@ -336,5 +373,6 @@ module.exports = {
   getByReference,
   getPaymentStatusByReference,
   list,
+  listCustomerTransactionHistory,
   previewByReference,
 };

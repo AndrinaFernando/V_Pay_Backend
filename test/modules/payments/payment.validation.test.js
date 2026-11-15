@@ -10,6 +10,7 @@ const {
   MIN_EXPIRY_SECONDS,
   validateConfirmPaymentIntentInput,
   validateCreatePaymentIntentInput,
+  validateListCustomerTransactionsQuery,
   validateListPaymentIntentsQuery,
 } = require('../../../src/modules/payments/payment.validation');
 
@@ -110,6 +111,22 @@ test('validates recent-intent list limit and applies its default', () => {
 
   for (const limit of ['0', '-1', '1.5', 'abc', String(MAX_LIST_LIMIT + 1)]) {
     assert.match(validateListPaymentIntentsQuery({ limit }).error, /limit/);
+  }
+});
+
+test('validates customer transaction history limits', () => {
+  assert.deepEqual(validateListCustomerTransactionsQuery({}), {
+    value: { limit: DEFAULT_LIST_LIMIT },
+  });
+  assert.deepEqual(validateListCustomerTransactionsQuery({ limit: '50' }), {
+    value: { limit: 50 },
+  });
+
+  for (const limit of ['0', '51', '-1', '1.5', 'abc']) {
+    assert.match(
+      validateListCustomerTransactionsQuery({ limit }).error,
+      /limit/,
+    );
   }
 });
 
