@@ -3,6 +3,8 @@ const DEFAULT_EXPIRY_SECONDS = 15 * 60;
 const MIN_EXPIRY_SECONDS = 60;
 const MAX_EXPIRY_SECONDS = 24 * 60 * 60;
 const MAX_DESCRIPTION_LENGTH = 200;
+const DEFAULT_LIST_LIMIT = 20;
+const MAX_LIST_LIMIT = 50;
 
 const ALLOWED_FIELDS = new Set([
   'amountMinor',
@@ -71,11 +73,32 @@ function validateCreatePaymentIntentInput(body) {
   };
 }
 
+function validateListPaymentIntentsQuery(query) {
+  const rawLimit = query?.limit;
+  if (rawLimit === undefined) {
+    return { value: { limit: DEFAULT_LIST_LIMIT } };
+  }
+
+  if (typeof rawLimit !== 'string' || !/^\d+$/.test(rawLimit)) {
+    return { error: `limit must be an integer from 1 to ${MAX_LIST_LIMIT}` };
+  }
+
+  const limit = Number(rawLimit);
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_LIST_LIMIT) {
+    return { error: `limit must be an integer from 1 to ${MAX_LIST_LIMIT}` };
+  }
+
+  return { value: { limit } };
+}
+
 module.exports = {
+  DEFAULT_LIST_LIMIT,
   DEFAULT_EXPIRY_SECONDS,
   MAX_DESCRIPTION_LENGTH,
   MAX_EXPIRY_SECONDS,
+  MAX_LIST_LIMIT,
   MIN_EXPIRY_SECONDS,
   PAYMENT_CURRENCY,
   validateCreatePaymentIntentInput,
+  validateListPaymentIntentsQuery,
 };

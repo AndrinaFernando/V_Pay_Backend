@@ -40,6 +40,37 @@ function makeFakeDb({ users, intents = {} }) {
           }
           return makeRef(name, id);
         },
+        where(field, operator, expected) {
+          assert.equal(field, 'merchantUid');
+          assert.equal(operator, '==');
+          let limit = Infinity;
+          return {
+            orderBy(orderField, direction) {
+              assert.equal(orderField, 'createdAt');
+              assert.equal(direction, 'desc');
+              return this;
+            },
+            limit(value) {
+              limit = value;
+              return this;
+            },
+            async get() {
+              const docs = [...collections[name].entries()]
+                .filter(([, data]) => data[field] === expected)
+                .sort(([, left], [, right]) =>
+                  new Date(right.createdAt) - new Date(left.createdAt),
+                )
+                .slice(0, limit)
+                .map(([id, data]) => ({
+                  id,
+                  ref: makeRef(name, id),
+                  exists: true,
+                  data: () => data,
+                }));
+              return { docs };
+            },
+          };
+        },
       };
     },
     async runTransaction(callback) {
@@ -293,4 +324,74 @@ test('does not expire an intent that is already successful', async () => {
     collections.paymentIntents.get('ref1').status,
     PAYMENT_INTENT_STATUS.SUCCESS
   );
+});
+
+test('lists only owned merchant intents newest first and expires overdue pending', async () => {
+  const now = new Date('2026-11-13T10:15:00.000Z');
+  const { db, collections } = makeFakeDb({
+    users: { merchant1: merchant, merchant2: merchant },
+    intents: {
+      oldPending: {
+        merchantUid: 'merchant1',
+        merchantName: 'Test Merchant',
+        amountMinor: 100,
+        currency: 'LKR',
+        status: PAYMENT_INTENT_STATUS.PENDING,
+        createdAt: new Date('2026-11-13T10:00:00.000Z'),
+        expiresAt: new Date('2026-11-13T10:01:00.000Z'),
+      },
+      latestSuccess: {
+        merchantUid: 'merchant1',
+        merchantName: 'Test Merchant',
+        amountMinor: 250,
+        currency: 'LKR',
+        status: PAYMENT_INTENT_STATUS.SUCCESS,
+        createdAt: new Date('2026-11-13T10:10:00.000Z'),
+        expiresAt: new Date('2026-11-13T10:25:00.000Z'),
+      },
+      anotherMerchant: {
+        merchantUid: 'merchant2',
+        merchantName: 'Other Merchant',
+        amountMinor: 300,
+        currency: 'LKR',
+        status: PAYMENT_INTENT_STATUS.PENDING,
+        createdAt: new Date('2026-11-13T10:12:00.000Z'),
+        expiresAt: new Date('2026-11-13T10:20:00.000Z'),
+      },
+    },
+  });
+  const service = createPaymentService({ db, clock: () => now });
+
+  const result = await service.listPaymentIntents({ uid: 'merchant1', limit: 20 });
+
+  assert.equal(result.outcome, PAYMENT_INTENT_OUTCOMES.LISTED);
+  assert.deepEqual(
+    result.paymentIntents.map(({ paymentReference, status }) => ({
+      paymentReference,
+      status,
+    })),
+    [
+      { paymentReference: 'latestSuccess', status: PAYMENT_INTENT_STATUS.SUCCESS },
+      { paymentReference: 'oldPending', status: PAYMENT_INTENT_STATUS.EXPIRED },
+    ],
+  );
+  assert.equal(
+    collections.paymentIntents.get('oldPending').status,
+    PAYMENT_INTENT_STATUS.EXPIRED,
+  );
+});
+
+test('does not list intents for customers or inactive merchants', async () => {
+  const { db } = makeFakeDb({
+    users: {
+      customer1: { role: 'CUSTOMER', status: 'ACTIVE' },
+      inactiveMerchant: { ...merchant, status: 'DISABLED' },
+    },
+  });
+  const service = createPaymentService({ db });
+
+  for (const uid of ['customer1', 'inactiveMerchant']) {
+    const result = await service.listPaymentIntents({ uid });
+    assert.equal(result.outcome, PAYMENT_INTENT_OUTCOMES.ROLE_FORBIDDEN);
+  }
 });

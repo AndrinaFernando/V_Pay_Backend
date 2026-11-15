@@ -2,8 +2,12 @@ const {
   PAYMENT_INTENT_OUTCOMES,
   createPaymentIntent,
   getPaymentIntent,
+  listPaymentIntents,
 } = require('./payment.service');
-const { validateCreatePaymentIntentInput } = require('./payment.validation');
+const {
+  validateCreatePaymentIntentInput,
+  validateListPaymentIntentsQuery,
+} = require('./payment.validation');
 
 function sendServiceError(res, outcome) {
   if (outcome === PAYMENT_INTENT_OUTCOMES.PROFILE_NOT_FOUND) {
@@ -98,4 +102,39 @@ async function getByReference(req, res) {
   }
 }
 
-module.exports = { create, getByReference };
+async function list(req, res) {
+  if (req.user.emailVerified !== true) {
+    return res.status(403).json({
+      success: false,
+      message: 'Email verification is required',
+    });
+  }
+
+  const validation = validateListPaymentIntentsQuery(req.query);
+  if (validation.error) {
+    return res.status(400).json({ success: false, message: validation.error });
+  }
+
+  try {
+    const result = await listPaymentIntents({
+      uid: req.user.uid,
+      ...validation.value,
+    });
+    if (result.outcome !== PAYMENT_INTENT_OUTCOMES.LISTED) {
+      return sendServiceError(res, result.outcome);
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: { paymentIntents: result.paymentIntents },
+    });
+  } catch (error) {
+    console.error('Payment intent listing failed:', error.message);
+    return res.status(500).json({
+      success: false,
+      message: 'Unable to retrieve payment intents',
+    });
+  }
+}
+
+module.exports = { create, getByReference, list };

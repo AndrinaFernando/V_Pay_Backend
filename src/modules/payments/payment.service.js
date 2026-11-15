@@ -9,6 +9,7 @@ const PAYMENT_INTENT_STATUS = Object.freeze({
 const PAYMENT_INTENT_OUTCOMES = Object.freeze({
   CREATED: 'CREATED',
   FOUND: 'FOUND',
+  LISTED: 'LISTED',
   PROFILE_NOT_FOUND: 'PROFILE_NOT_FOUND',
   ROLE_FORBIDDEN: 'ROLE_FORBIDDEN',
   NOT_FOUND: 'NOT_FOUND',
@@ -143,7 +144,50 @@ function createPaymentService({ db, clock = () => new Date() }) {
     });
   }
 
-  return { createPaymentIntent, getPaymentIntent };
+  async function listPaymentIntents({ uid, limit = 20 }) {
+    const merchantResult = await getMerchant(uid);
+    if (merchantResult.outcome) return merchantResult;
+
+    const snapshot = await db
+      .collection('paymentIntents')
+      .where('merchantUid', '==', uid)
+      .orderBy('createdAt', 'desc')
+      .limit(limit)
+      .get();
+
+    const paymentIntents = await Promise.all(
+      snapshot.docs.map(async (document) =>
+        db.runTransaction(async (transaction) => {
+          const current = await transaction.get(document.ref);
+          if (!current.exists) return null;
+
+          const data = current.data();
+          if (data.merchantUid !== uid) return null;
+
+          let status = data.status;
+          if (status === PAYMENT_INTENT_STATUS.PENDING) {
+            const expiresAt = toDate(data.expiresAt);
+            if (!expiresAt || Number.isNaN(expiresAt.getTime())) {
+              throw new Error('Payment intent has invalid expiry data');
+            }
+            if (expiresAt.getTime() <= clock().getTime()) {
+              status = PAYMENT_INTENT_STATUS.EXPIRED;
+              transaction.update(document.ref, { status });
+            }
+          }
+
+          return toPublicPaymentIntent(document.id, { ...data, status });
+        }),
+      ),
+    );
+
+    return {
+      outcome: PAYMENT_INTENT_OUTCOMES.LISTED,
+      paymentIntents: paymentIntents.filter(Boolean),
+    };
+  }
+
+  return { createPaymentIntent, getPaymentIntent, listPaymentIntents };
 }
 
 function getDefaultService() {
@@ -159,10 +203,15 @@ async function getPaymentIntent(input) {
   return getDefaultService().getPaymentIntent(input);
 }
 
+async function listPaymentIntents(input) {
+  return getDefaultService().listPaymentIntents(input);
+}
+
 module.exports = {
   PAYMENT_INTENT_OUTCOMES,
   PAYMENT_INTENT_STATUS,
   createPaymentIntent,
   createPaymentService,
   getPaymentIntent,
+  listPaymentIntents,
 };
