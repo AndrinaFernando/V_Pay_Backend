@@ -99,6 +99,7 @@ test.describe('QR payments with the Firestore emulator', { skip: skipReason }, (
     amountMinor = 12550,
     customerBalanceMinor = 100000,
     merchantBalanceMinor = 10000,
+    cardCurrency,
     cardStatus = 'ACTIVE',
     cardExpiresAt = FUTURE,
     intentExpiresAt = FUTURE,
@@ -136,8 +137,8 @@ test.describe('QR payments with the Firestore emulator', { skip: skipReason }, (
     });
     batch.set(refs.card, {
       ownerId: customerUid,
-      balanceMinor: customerBalanceMinor,
-      currency: 'LKR',
+      balance: customerBalanceMinor / 100,
+      ...(cardCurrency !== undefined && { currency: cardCurrency }),
       status: cardStatus,
       expiresAt: cardExpiresAt,
     });
@@ -196,8 +197,8 @@ test.describe('QR payments with the Firestore emulator', { skip: skipReason }, (
 
     assert.equal(result.outcome, PAYMENT_EXECUTION_OUTCOMES.SUCCEEDED);
     assert.equal(
-      card.data().balanceMinor,
-      scenario.customerBalanceMinor - scenario.amountMinor,
+      card.data().balance,
+      (scenario.customerBalanceMinor - scenario.amountMinor) / 100,
     );
     assert.equal(
       account.data().balanceMinor,
@@ -247,8 +248,8 @@ test.describe('QR payments with the Firestore emulator', { skip: skipReason }, (
 
       assert.equal(result.outcome, outcome);
       assert.equal(
-        card.data().balanceMinor,
-        succeeds ? 3_000_000 - amountMinor : 3_000_000,
+        card.data().balance,
+        (succeeds ? 3_000_000 - amountMinor : 3_000_000) / 100,
       );
       assert.equal(
         account.data().balanceMinor,
@@ -291,8 +292,8 @@ test.describe('QR payments with the Firestore emulator', { skip: skipReason }, (
 
       assert.equal(result.outcome, outcome);
       assert.equal(
-        card.data().balanceMinor,
-        resultingBalanceMinor ?? balanceMinor,
+        card.data().balance,
+        (resultingBalanceMinor ?? balanceMinor) / 100,
       );
       assert.equal(
         account.data().balanceMinor,
@@ -347,8 +348,8 @@ test.describe('QR payments with the Firestore emulator', { skip: skipReason }, (
         .get(),
     ]);
     assert.equal(
-      card.data().balanceMinor,
-      scenario.customerBalanceMinor - scenario.amountMinor,
+      card.data().balance,
+      (scenario.customerBalanceMinor - scenario.amountMinor) / 100,
     );
     assert.equal(
       account.data().balanceMinor,
@@ -365,8 +366,7 @@ test.describe('QR payments with the Firestore emulator', { skip: skipReason }, (
     );
     await otherCard.set({
       ownerId: scenario.otherCustomerUid,
-      balanceMinor: otherCustomerBalanceMinor,
-      currency: 'LKR',
+      balance: otherCustomerBalanceMinor / 100,
       status: 'ACTIVE',
       expiresAt: FUTURE,
     });
@@ -412,8 +412,8 @@ test.describe('QR payments with the Firestore emulator', { skip: skipReason }, (
           .get(),
       ]);
     const persistedBalances = new Map([
-      [scenario.customerUid, customerCard.data().balanceMinor],
-      [scenario.otherCustomerUid, competingCard.data().balanceMinor],
+      [scenario.customerUid, customerCard.data().balance * 100],
+      [scenario.otherCustomerUid, competingCard.data().balance * 100],
     ]);
 
     assert.equal(
@@ -493,8 +493,8 @@ test.describe('QR payments with the Firestore emulator', { skip: skipReason }, (
         scenario.refs.transaction.get(),
         secondTransaction.get(),
       ]);
-    assert.equal(card.data().balanceMinor, 55000);
-    assert.ok(card.data().balanceMinor >= 50000);
+    assert.equal(card.data().balance, 550);
+    assert.ok(card.data().balance >= 500);
     assert.equal(account.data().balanceMinor, 12000);
     const intentStatuses = [
       firstIntent.data().status,
@@ -529,6 +529,11 @@ test.describe('QR payments with the Firestore emulator', { skip: skipReason }, (
         name: 'frozen card',
         options: { cardStatus: 'FROZEN' },
         outcome: PAYMENT_EXECUTION_OUTCOMES.CARD_FROZEN,
+      },
+      {
+        name: 'explicitly unsupported card currency',
+        options: { cardCurrency: 'USD' },
+        outcome: PAYMENT_EXECUTION_OUTCOMES.ACCOUNT_NOT_READY,
       },
       {
         name: 'expired card',
@@ -566,8 +571,8 @@ test.describe('QR payments with the Firestore emulator', { skip: skipReason }, (
 
       assert.equal(result.outcome, failureCase.outcome, failureCase.name);
       assert.equal(
-        card.data().balanceMinor,
-        scenario.customerBalanceMinor,
+        card.data().balance,
+        scenario.customerBalanceMinor / 100,
         failureCase.name,
       );
       if (account.exists) {
@@ -611,7 +616,7 @@ test.describe('QR payments with the Firestore emulator', { skip: skipReason }, (
     assert.equal(duplicate.outcome, PAYMENT_EXECUTION_OUTCOMES.SUCCEEDED);
     assert.equal(duplicate.idempotent, true);
     assert.equal(duplicate.payment.transactionId, first.payment.transactionId);
-    assert.equal(cardAfter.data().balanceMinor, cardBefore.data().balanceMinor);
+    assert.equal(cardAfter.data().balance, cardBefore.data().balance);
     assert.equal(accountAfter.data().balanceMinor, accountBefore.data().balanceMinor);
     assert.equal(
       transactionAfter.updateTime.toMillis(),

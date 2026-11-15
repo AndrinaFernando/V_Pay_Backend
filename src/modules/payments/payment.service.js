@@ -6,6 +6,8 @@ const {
   getMaximumPaymentAmountMinor,
 } = require('./payment.limit.provider');
 const {
+  convertMinorUnitsToRupees,
+  convertRupeesToMinorUnits,
   MIN_RETAINED_BALANCE_MINOR,
   PAYMENT_BALANCE_VALIDATION_OUTCOMES,
   validatePaymentBalance,
@@ -483,7 +485,13 @@ function createPaymentService({
         return { outcome: PAYMENT_EXECUTION_OUTCOMES.CARD_FROZEN };
       }
 
-      if (card.status !== 'ACTIVE' || card.currency !== PAYMENT_CURRENCY) {
+      if (
+        card.status !== 'ACTIVE' ||
+        (
+          card.currency !== undefined &&
+          card.currency !== PAYMENT_CURRENCY
+        )
+      ) {
         return { outcome: PAYMENT_EXECUTION_OUTCOMES.ACCOUNT_NOT_READY };
       }
 
@@ -496,10 +504,8 @@ function createPaymentService({
         return { outcome: PAYMENT_EXECUTION_OUTCOMES.CARD_EXPIRED };
       }
 
-      if (
-        Object.prototype.hasOwnProperty.call(card, 'balance') ||
-        !isNonnegativeSafeInteger(card.balanceMinor)
-      ) {
+      const customerBalanceMinor = convertRupeesToMinorUnits(card.balance);
+      if (customerBalanceMinor === null) {
         return {
           outcome: PAYMENT_EXECUTION_OUTCOMES.INVALID_BALANCE_SCHEMA,
         };
@@ -541,7 +547,7 @@ function createPaymentService({
       }
 
       const balanceValidation = validatePaymentBalance(
-        card.balanceMinor,
+        customerBalanceMinor,
         paymentIntent.amountMinor,
         MIN_RETAINED_BALANCE_MINOR,
       );
@@ -577,12 +583,16 @@ function createPaymentService({
         return { outcome: PAYMENT_EXECUTION_OUTCOMES.PAYMENT_UNAVAILABLE };
       }
 
-      const customerBalanceMinor = balanceValidation.resultingBalanceMinor;
+      const resultingCustomerBalanceMinor =
+        balanceValidation.resultingBalanceMinor;
+      const resultingCustomerBalance = convertMinorUnitsToRupees(
+        resultingCustomerBalanceMinor,
+      );
       const merchantBalanceMinor =
         merchantAccount.balanceMinor + paymentIntent.amountMinor;
 
       transaction.update(cardRef, {
-        balanceMinor: customerBalanceMinor,
+        balance: resultingCustomerBalance,
       });
       transaction.update(merchantAccountRef, {
         balanceMinor: merchantBalanceMinor,

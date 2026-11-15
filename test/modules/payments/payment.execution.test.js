@@ -8,6 +8,9 @@ const {
   buildQrTransactionId,
   createPaymentService,
 } = require('../../../src/modules/payments/payment.service');
+const {
+  createTopupService,
+} = require('../../../src/modules/topups/topup.service');
 
 const NOW = new Date('2026-11-15T10:00:00.000Z');
 const FUTURE = new Date('2026-11-15T11:00:00.000Z');
@@ -116,8 +119,7 @@ function makeScenario({
       cards: {
         customer1: {
           ownerId: 'customer1',
-          balanceMinor: 100000,
-          currency: 'LKR',
+          balance: 1000,
           status: 'ACTIVE',
           expiresAt: FUTURE,
         },
@@ -195,8 +197,8 @@ test('atomically executes a QR payment using integer LKR cents', async () => {
     paidAt: NOW.toISOString(),
   });
   assert.equal(
-    scenario.collections.cards.get('customer1').balanceMinor,
-    87450,
+    scenario.collections.cards.get('customer1').balance,
+    874.5,
   );
   assert.equal(
     scenario.collections.merchantAccounts.get('merchant1').balanceMinor,
@@ -227,12 +229,12 @@ test('atomically executes a QR payment using integer LKR cents', async () => {
 
 test('allows a payment that leaves exactly the retained balance', async () => {
   const scenario = makeScenario();
-  scenario.collections.cards.get('customer1').balanceMinor = 62550;
+  scenario.collections.cards.get('customer1').balance = 625.5;
 
   const result = await confirm(scenario);
 
   assert.equal(result.outcome, PAYMENT_EXECUTION_OUTCOMES.SUCCEEDED);
-  assert.equal(scenario.collections.cards.get('customer1').balanceMinor, 50000);
+  assert.equal(scenario.collections.cards.get('customer1').balance, 500);
 });
 
 test('enforces retained-balance outcomes during payment execution', async () => {
@@ -248,7 +250,7 @@ test('enforces retained-balance outcomes during payment execution', async () => 
 
   for (const [balanceMinor, amountMinor, outcome, resultingBalanceMinor] of cases) {
     const scenario = makeScenario();
-    scenario.collections.cards.get('customer1').balanceMinor = balanceMinor;
+    scenario.collections.cards.get('customer1').balance = balanceMinor / 100;
     scenario.collections.paymentIntents.get(
       scenario.paymentReference,
     ).amountMinor = amountMinor;
@@ -257,8 +259,8 @@ test('enforces retained-balance outcomes during payment execution', async () => 
 
     assert.equal(result.outcome, outcome);
     assert.equal(
-      scenario.collections.cards.get('customer1').balanceMinor,
-      resultingBalanceMinor ?? balanceMinor,
+      scenario.collections.cards.get('customer1').balance,
+      (resultingBalanceMinor ?? balanceMinor) / 100,
     );
     assert.equal(
       scenario.collections.merchantAccounts.get('merchant1').balanceMinor,
@@ -275,7 +277,7 @@ test('enforces retained-balance outcomes during payment execution', async () => 
 
 test('rejects insufficient balance without changing financial documents', async () => {
   const scenario = makeScenario();
-  scenario.collections.cards.get('customer1').balanceMinor = 12549;
+  scenario.collections.cards.get('customer1').balance = 125.49;
 
   const result = await confirm(scenario);
 
@@ -283,7 +285,7 @@ test('rejects insufficient balance without changing financial documents', async 
     result.outcome,
     PAYMENT_EXECUTION_OUTCOMES.INSUFFICIENT_BALANCE,
   );
-  assert.equal(scenario.collections.cards.get('customer1').balanceMinor, 12549);
+  assert.equal(scenario.collections.cards.get('customer1').balance, 125.49);
   assert.equal(
     scenario.collections.merchantAccounts.get('merchant1').balanceMinor,
     10000,
@@ -298,7 +300,7 @@ test('enforces server-resolved payment limits before financial writes', async ()
     [2_500_000, PAYMENT_EXECUTION_OUTCOMES.PAYMENT_LIMIT_EXCEEDED],
   ]) {
     const scenario = makeScenario();
-    scenario.collections.cards.get('customer1').balanceMinor = 3_000_000;
+    scenario.collections.cards.get('customer1').balance = 30_000;
     scenario.collections.paymentIntents.get(
       scenario.paymentReference,
     ).amountMinor = amountMinor;
@@ -307,8 +309,8 @@ test('enforces server-resolved payment limits before financial writes', async ()
 
     assert.equal(result.outcome, outcome);
     assert.equal(
-      scenario.collections.cards.get('customer1').balanceMinor,
-      3_000_000,
+      scenario.collections.cards.get('customer1').balance,
+      30_000,
     );
     assert.equal(
       scenario.collections.merchantAccounts.get('merchant1').balanceMinor,
@@ -492,44 +494,138 @@ test('returns a non-retryable outcome for a terminally failed intent', async () 
   assert.equal(scenario.collections.transactions.size, 0);
 });
 
-test('rejects legacy decimal balances instead of migrating or resetting them', async () => {
+test('uses the existing rupee balance for exact fractional-rupee payments', async () => {
   const scenario = makeScenario();
   const card = scenario.collections.cards.get('customer1');
-  delete card.balanceMinor;
-  card.balance = 125.50;
+  card.balance = 1_000.55;
+  scenario.collections.paymentIntents.get(
+    scenario.paymentReference,
+  ).amountMinor = 12_555;
 
   const result = await confirm(scenario);
 
-  assert.equal(
-    result.outcome,
-    PAYMENT_EXECUTION_OUTCOMES.INVALID_BALANCE_SCHEMA,
-  );
-  assert.equal(card.balance, 125.50);
+  assert.equal(result.outcome, PAYMENT_EXECUTION_OUTCOMES.SUCCEEDED);
+  assert.equal(scenario.collections.cards.get('customer1').balance, 875);
   assert.equal('balanceMinor' in card, false);
-  assert.equal(scenario.collections.transactions.size, 0);
+  assert.equal(
+    scenario.collections.merchantAccounts.get('merchant1').balanceMinor,
+    22_555,
+  );
 });
 
-test('rejects an ambiguous card containing legacy and minor-unit balances', async () => {
+test('executes whole-rupee payments against the rupee balance', async () => {
   const scenario = makeScenario();
-  const card = scenario.collections.cards.get('customer1');
-  card.balance = 125.50;
+  scenario.collections.paymentIntents.get(
+    scenario.paymentReference,
+  ).amountMinor = 12_500;
 
   const result = await confirm(scenario);
 
+  assert.equal(result.outcome, PAYMENT_EXECUTION_OUTCOMES.SUCCEEDED);
+  assert.equal(scenario.collections.cards.get('customer1').balance, 875);
   assert.equal(
-    result.outcome,
-    PAYMENT_EXECUTION_OUTCOMES.INVALID_BALANCE_SCHEMA,
+    scenario.collections.merchantAccounts.get('merchant1').balanceMinor,
+    22_500,
   );
-  assert.equal(card.balance, 125.50);
-  assert.equal(card.balanceMinor, 100000);
-  assert.equal(scenario.collections.transactions.size, 0);
+});
+
+test('spends the same rupee balance credited by a successful top-up', async () => {
+  const scenario = makeScenario();
+  scenario.db.collection('topups');
+  scenario.collections.topups.set('topup-reference', {
+    uid: 'customer1',
+    requestedAmount: 120,
+    currency: 'LKR',
+    status: 'PENDING',
+    sessionId: 'session-reference',
+    createdAt: PAST,
+    updatedAt: PAST,
+  });
+  const topupService = createTopupService({
+    db: scenario.db,
+    gateway: {},
+    now: () => NOW,
+  });
+
+  const topup = await topupService.applyEvent({
+    clientReference: 'topup-reference',
+    sessionId: 'session-reference',
+    paymentId: 'payment-reference',
+    eventId: 'event-reference',
+    requestedAmount: 120,
+    amount: 120,
+    currency: 'LKR',
+    status: 'SUCCESS',
+    message: 'Approved',
+  });
+  const payment = await confirm(scenario);
+
+  assert.equal(topup.status, 'SUCCESS');
+  assert.equal(payment.outcome, PAYMENT_EXECUTION_OUTCOMES.SUCCEEDED);
+  assert.equal(scenario.collections.cards.get('customer1').balance, 994.5);
+  assert.equal(
+    scenario.collections.merchantAccounts.get('merchant1').balanceMinor,
+    22_550,
+  );
+  assert.equal(scenario.collections.transactions.size, 2);
+});
+
+test('rejects missing, unsafe, and fractional-cent customer balances', async () => {
+  for (const balance of [
+    undefined,
+    NaN,
+    Infinity,
+    -1,
+    500.001,
+    Number.MAX_SAFE_INTEGER,
+  ]) {
+    const scenario = makeScenario();
+    scenario.collections.cards.get('customer1').balance = balance;
+
+    const result = await confirm(scenario);
+
+    assert.equal(
+      result.outcome,
+      PAYMENT_EXECUTION_OUTCOMES.INVALID_BALANCE_SCHEMA,
+    );
+    assert.equal(scenario.collections.transactions.size, 0);
+    assert.equal(
+      scenario.collections.merchantAccounts.get('merchant1').balanceMinor,
+      10_000,
+    );
+  }
+});
+
+test('accepts missing or LKR card currency and rejects explicit non-LKR', async () => {
+  const implicitLkr = makeScenario();
+  assert.equal(
+    (await confirm(implicitLkr)).outcome,
+    PAYMENT_EXECUTION_OUTCOMES.SUCCEEDED,
+  );
+
+  const explicitLkr = makeScenario();
+  explicitLkr.collections.cards.get('customer1').currency = 'LKR';
+  assert.equal(
+    (await confirm(explicitLkr)).outcome,
+    PAYMENT_EXECUTION_OUTCOMES.SUCCEEDED,
+  );
+
+  for (const currency of ['USD', '', null]) {
+    const unsupported = makeScenario();
+    unsupported.collections.cards.get('customer1').currency = currency;
+    assert.equal(
+      (await confirm(unsupported)).outcome,
+      PAYMENT_EXECUTION_OUTCOMES.ACCOUNT_NOT_READY,
+    );
+    assert.equal(unsupported.collections.transactions.size, 0);
+  }
 });
 
 test('returns an idempotent result for a duplicate request by the original payer', async () => {
   const scenario = makeScenario();
   const first = await confirm(scenario);
   const balancesAfterFirst = {
-    customer: scenario.collections.cards.get('customer1').balanceMinor,
+    customer: scenario.collections.cards.get('customer1').balance,
     merchant: scenario.collections.merchantAccounts.get('merchant1').balanceMinor,
   };
 
@@ -541,7 +637,7 @@ test('returns an idempotent result for a duplicate request by the original payer
   assert.deepEqual(duplicate.payment, first.payment);
   assert.deepEqual(
     {
-      customer: scenario.collections.cards.get('customer1').balanceMinor,
+      customer: scenario.collections.cards.get('customer1').balance,
       merchant: scenario.collections.merchantAccounts.get('merchant1').balanceMinor,
     },
     balancesAfterFirst,
@@ -559,14 +655,14 @@ test('does not reapply current amount or balance policies to a completed payment
   });
 
   const first = await confirm(scenario);
-  scenario.collections.cards.get('customer1').balanceMinor = 0;
+  scenario.collections.cards.get('customer1').balance = 0;
   const duplicate = await confirm(scenario);
 
   assert.equal(first.outcome, PAYMENT_EXECUTION_OUTCOMES.SUCCEEDED);
   assert.equal(duplicate.outcome, PAYMENT_EXECUTION_OUTCOMES.SUCCEEDED);
   assert.equal(duplicate.idempotent, true);
   assert.equal(providerCalls, 1);
-  assert.equal(scenario.collections.cards.get('customer1').balanceMinor, 0);
+  assert.equal(scenario.collections.cards.get('customer1').balance, 0);
 });
 
 test('serializable concurrent confirmations transfer funds only once', async () => {
@@ -582,7 +678,7 @@ test('serializable concurrent confirmations transfer funds only once', async () 
     ],
   );
   assert.equal(results.filter(({ idempotent }) => idempotent).length, 1);
-  assert.equal(scenario.collections.cards.get('customer1').balanceMinor, 87450);
+  assert.equal(scenario.collections.cards.get('customer1').balance, 874.5);
   assert.equal(
     scenario.collections.merchantAccounts.get('merchant1').balanceMinor,
     22550,
@@ -598,8 +694,7 @@ test('does not report success to a different customer after payment', async () =
   });
   scenario.collections.cards.set('customer2', {
     ownerId: 'customer2',
-    balanceMinor: 50000,
-    currency: 'LKR',
+    balance: 500,
     status: 'ACTIVE',
     expiresAt: FUTURE,
   });
@@ -613,14 +708,14 @@ test('does not report success to a different customer after payment', async () =
     PAYMENT_EXECUTION_OUTCOMES.PAYMENT_ALREADY_PAID,
   );
   assert.equal(
-    scenario.collections.cards.get('customer2').balanceMinor,
-    50000,
+    scenario.collections.cards.get('customer2').balance,
+    500,
   );
 });
 
 test('rejects unsafe balances, unsafe amounts, and merchant overflow', async () => {
   const unsafeCustomer = makeScenario();
-  unsafeCustomer.collections.cards.get('customer1').balanceMinor = 1.5;
+  unsafeCustomer.collections.cards.get('customer1').balance = 1.005;
   assert.equal(
     (await confirm(unsafeCustomer)).outcome,
     PAYMENT_EXECUTION_OUTCOMES.INVALID_BALANCE_SCHEMA,
@@ -692,7 +787,7 @@ test('rolls back every staged write when transaction commit fails', async () => 
 
   await assert.rejects(confirm(scenario), /commit failure/);
 
-  assert.equal(scenario.collections.cards.get('customer1').balanceMinor, 100000);
+  assert.equal(scenario.collections.cards.get('customer1').balance, 1000);
   assert.equal(
     scenario.collections.merchantAccounts.get('merchant1').balanceMinor,
     10000,
@@ -748,7 +843,7 @@ test('retrieves a successful payment for its original customer without writes', 
   const writesAfterPayment = scenario.writesRecorded.length;
   const customerBalance = scenario.collections.cards.get(
     'customer1',
-  ).balanceMinor;
+  ).balance;
   const merchantBalance = scenario.collections.merchantAccounts.get(
     'merchant1',
   ).balanceMinor;
@@ -769,7 +864,7 @@ test('retrieves a successful payment for its original customer without writes', 
   assert.deepEqual(repeated.payment, first.payment);
   assert.equal(scenario.writesRecorded.length, writesAfterPayment);
   assert.equal(
-    scenario.collections.cards.get('customer1').balanceMinor,
+    scenario.collections.cards.get('customer1').balance,
     customerBalance,
   );
   assert.equal(

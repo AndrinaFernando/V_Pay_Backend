@@ -53,6 +53,7 @@ async function bootstrapUser({
 }) {
   const userRef = db.collection('users').doc(uid);
   const cardRef = db.collection('cards').doc(uid);
+  const merchantAccountRef = db.collection('merchantAccounts').doc(uid);
   const profile = {
     name,
     phone,
@@ -78,9 +79,14 @@ async function bootstrapUser({
       }
 
       let cardSnapshot = null;
+      let merchantAccountSnapshot = null;
 
       if (role === 'CUSTOMER') {
         cardSnapshot = await transaction.get(cardRef);
+      } else if (role === 'MERCHANT') {
+        merchantAccountSnapshot = await transaction.get(
+          merchantAccountRef,
+        );
       }
 
       const profileCreated = !existingUser;
@@ -106,6 +112,18 @@ async function bootstrapUser({
           cardRef,
           createInitialVirtualCardData(uid)
         );
+      }
+
+      if (
+        role === 'MERCHANT' &&
+        profileCreated &&
+        !merchantAccountSnapshot.exists
+      ) {
+        transaction.set(merchantAccountRef, {
+          balanceMinor: 0,
+          currency: 'LKR',
+          status: 'ACTIVE',
+        });
       }
 
       return {
