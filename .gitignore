@@ -6,3 +6,4 @@ secrets/
 serviceAccountKey.json
 firebase-admin-key.json
 *-firebase-adminsdk-*.json
+TOP_UP_TEAM_HANDOFF.md
