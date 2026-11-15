@@ -3,10 +3,13 @@ const assert = require('node:assert/strict');
 
 const {
   DEFAULT_EXPIRY_SECONDS,
+  DEFAULT_LIST_LIMIT,
   MAX_DESCRIPTION_LENGTH,
   MAX_EXPIRY_SECONDS,
+  MAX_LIST_LIMIT,
   MIN_EXPIRY_SECONDS,
   validateCreatePaymentIntentInput,
+  validateListPaymentIntentsQuery,
 } = require('../../../src/modules/payments/payment.validation');
 
 test('accepts valid input, trims description, and applies default expiry', () => {
@@ -90,5 +93,21 @@ test('rejects client-supplied ownership, status, and expiry timestamp fields', (
       [field]: 'client-controlled',
     });
     assert.match(result.error, /Unexpected field/);
+  }
+});
+
+test('validates recent-intent list limit and applies its default', () => {
+  assert.deepEqual(validateListPaymentIntentsQuery({}), {
+    value: { limit: DEFAULT_LIST_LIMIT },
+  });
+  assert.deepEqual(validateListPaymentIntentsQuery({ limit: '5' }), {
+    value: { limit: 5 },
+  });
+  assert.deepEqual(validateListPaymentIntentsQuery({ limit: String(MAX_LIST_LIMIT) }), {
+    value: { limit: MAX_LIST_LIMIT },
+  });
+
+  for (const limit of ['0', '-1', '1.5', 'abc', String(MAX_LIST_LIMIT + 1)]) {
+    assert.match(validateListPaymentIntentsQuery({ limit }).error, /limit/);
   }
 });

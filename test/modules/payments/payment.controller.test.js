@@ -9,6 +9,9 @@ let createPaymentIntent = async () => {
 let getPaymentIntent = async () => {
   throw new Error('Firestore unavailable');
 };
+let listPaymentIntents = async () => {
+  throw new Error('Firestore unavailable');
+};
 
 const paymentServiceStub = new Module(paymentServicePath);
 paymentServiceStub.filename = paymentServicePath;
@@ -17,16 +20,18 @@ paymentServiceStub.exports = {
   PAYMENT_INTENT_OUTCOMES: {
     CREATED: 'CREATED',
     FOUND: 'FOUND',
+    LISTED: 'LISTED',
     PROFILE_NOT_FOUND: 'PROFILE_NOT_FOUND',
     ROLE_FORBIDDEN: 'ROLE_FORBIDDEN',
     NOT_FOUND: 'NOT_FOUND',
   },
   createPaymentIntent: (...args) => createPaymentIntent(...args),
   getPaymentIntent: (...args) => getPaymentIntent(...args),
+  listPaymentIntents: (...args) => listPaymentIntents(...args),
 };
 require.cache[paymentServicePath] = paymentServiceStub;
 
-const { create, getByReference } = require('../../../src/modules/payments/payment.controller');
+const { create, getByReference, list } = require('../../../src/modules/payments/payment.controller');
 
 function makeResponse() {
   return {
@@ -105,4 +110,44 @@ test('returns a safe server error when Firestore retrieval fails', async () => {
     success: false,
     message: 'Unable to retrieve payment intent',
   });
+});
+
+test('lists only for verified users and derives merchant UID from auth middleware', async () => {
+  let args;
+  listPaymentIntents = async (input) => {
+    args = input;
+    return { outcome: 'LISTED', paymentIntents: [] };
+  };
+  const res = makeResponse();
+
+  await list(
+    {
+      user: { uid: 'verified-uid', emailVerified: true },
+      query: { limit: '7' },
+    },
+    res,
+  );
+
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(args, { uid: 'verified-uid', limit: 7 });
+  assert.deepEqual(res.body, {
+    success: true,
+    data: { paymentIntents: [] },
+  });
+});
+
+test('rejects unverified intent-list requests without calling service', async () => {
+  let called = false;
+  listPaymentIntents = async () => {
+    called = true;
+  };
+  const res = makeResponse();
+
+  await list(
+    { user: { uid: 'verified-uid', emailVerified: false }, query: {} },
+    res,
+  );
+
+  assert.equal(res.statusCode, 403);
+  assert.equal(called, false);
 });
