@@ -218,6 +218,30 @@ test('returns a customer-specific error for a merchant or inactive customer', as
   });
 });
 
+test('returns a distinct preview error when the customer profile is missing', async () => {
+  previewPaymentIntent = async ({ uid, paymentReference }) => {
+    assert.equal(uid, 'missing-customer-uid');
+    assert.equal(paymentReference, 'intent-reference');
+    return { outcome: 'PROFILE_NOT_FOUND' };
+  };
+  const res = makeResponse();
+
+  await previewByReference(
+    {
+      user: { uid: 'missing-customer-uid', emailVerified: true },
+      params: { paymentReference: 'intent-reference' },
+    },
+    res,
+  );
+
+  assert.equal(res.statusCode, 404);
+  assert.deepEqual(res.body, {
+    success: false,
+    code: 'CUSTOMER_PROFILE_NOT_FOUND',
+    message: 'VPay user profile not found',
+  });
+});
+
 test('returns safe preview errors for missing intents and service failures', async () => {
   previewPaymentIntent = async () => ({ outcome: 'NOT_FOUND' });
   const missingResponse = makeResponse();
@@ -230,6 +254,7 @@ test('returns safe preview errors for missing intents and service failures', asy
   assert.equal(missingResponse.statusCode, 404);
   assert.deepEqual(missingResponse.body, {
     success: false,
+    code: 'PAYMENT_INTENT_NOT_FOUND',
     message: 'Payment intent not found',
   });
 

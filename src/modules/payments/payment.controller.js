@@ -16,6 +16,9 @@ function sendServiceError(res, outcome, accountType = 'merchant') {
   if (outcome === PAYMENT_INTENT_OUTCOMES.PROFILE_NOT_FOUND) {
     return res.status(404).json({
       success: false,
+      ...(accountType === 'customer' && {
+        code: 'CUSTOMER_PROFILE_NOT_FOUND',
+      }),
       message: 'VPay user profile not found',
     });
   }
@@ -34,6 +37,9 @@ function sendServiceError(res, outcome, accountType = 'merchant') {
   if (outcome === PAYMENT_INTENT_OUTCOMES.NOT_FOUND) {
     return res.status(404).json({
       success: false,
+      ...(accountType === 'customer' && {
+        code: 'PAYMENT_INTENT_NOT_FOUND',
+      }),
       message: 'Payment intent not found',
     });
   }

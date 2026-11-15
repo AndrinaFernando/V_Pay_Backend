@@ -189,6 +189,45 @@ test('preview route authenticates and returns the expected response envelope', a
   assert.equal(res.body.data.paymentIntent.paymentReference, 'preview-reference');
 });
 
+test('preview route distinguishes missing customer and payment intent errors', async () => {
+  verifyIdToken = async () => ({
+    uid: 'customer1',
+    email: 'customer@example.test',
+    email_verified: true,
+  });
+
+  for (const expected of [
+    {
+      outcome: 'PROFILE_NOT_FOUND',
+      code: 'CUSTOMER_PROFILE_NOT_FOUND',
+      message: 'VPay user profile not found',
+    },
+    {
+      outcome: 'NOT_FOUND',
+      code: 'PAYMENT_INTENT_NOT_FOUND',
+      message: 'Payment intent not found',
+    },
+  ]) {
+    previewPaymentIntent = async () => ({ outcome: expected.outcome });
+
+    const res = await invokeRoute(
+      '/payment-intents/:paymentReference/preview',
+      'get',
+      {
+        headers: { authorization: 'Bearer valid-customer-token' },
+        params: { paymentReference: 'unknown-reference' },
+      },
+    );
+
+    assert.equal(res.statusCode, 404);
+    assert.deepEqual(res.body, {
+      success: false,
+      code: expected.code,
+      message: expected.message,
+    });
+  }
+});
+
 test('confirmation route authenticates and remains distinct from merchant routes', async () => {
   verifyIdToken = async () => ({
     uid: 'customer1',
