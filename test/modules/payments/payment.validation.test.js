@@ -6,6 +6,7 @@ const {
   MAX_DESCRIPTION_LENGTH,
   MAX_EXPIRY_SECONDS,
   MIN_EXPIRY_SECONDS,
+  validateConfirmPaymentIntentInput,
   validateCreatePaymentIntentInput,
 } = require('../../../src/modules/payments/payment.validation');
 
@@ -90,5 +91,29 @@ test('rejects client-supplied ownership, status, and expiry timestamp fields', (
       [field]: 'client-controlled',
     });
     assert.match(result.error, /Unexpected field/);
+  }
+});
+
+test('supports an omitted or empty confirmation body and rejects explicit null', () => {
+  assert.deepEqual(validateConfirmPaymentIntentInput(undefined), {
+    value: {},
+  });
+  assert.deepEqual(validateConfirmPaymentIntentInput({}), {
+    value: {},
+  });
+  assert.match(
+    validateConfirmPaymentIntentInput(null).error,
+    /empty JSON object/,
+  );
+
+  for (const body of [
+    { amountMinor: 100 },
+    { currency: 'LKR' },
+    { merchantUid: 'merchant1' },
+    { customerUid: 'customer1' },
+    { status: 'SUCCESS' },
+    [],
+  ]) {
+    assert.match(validateConfirmPaymentIntentInput(body).error, /body|payment data/);
   }
 });

@@ -32,11 +32,37 @@ let previewPaymentIntent = async () => ({
   outcome: 'FOUND',
   paymentIntent: { paymentReference: 'preview-reference' },
 });
+let confirmPaymentIntent = async () => ({
+  outcome: 'SUCCEEDED',
+  payment: { paymentReference: 'confirmed-reference' },
+});
+let getPaymentStatus = async () => ({
+  outcome: 'FOUND',
+  payment: { paymentReference: 'status-reference', status: 'PENDING' },
+});
 
 const paymentServiceStub = new Module(paymentServicePath);
 paymentServiceStub.filename = paymentServicePath;
 paymentServiceStub.loaded = true;
 paymentServiceStub.exports = {
+  PAYMENT_EXECUTION_OUTCOMES: {
+    SUCCEEDED: 'SUCCEEDED',
+    PAYMENT_NOT_FOUND: 'PAYMENT_NOT_FOUND',
+    PAYMENT_EXPIRED: 'PAYMENT_EXPIRED',
+    PAYMENT_FAILED: 'PAYMENT_FAILED',
+    PAYMENT_ALREADY_PAID: 'PAYMENT_ALREADY_PAID',
+    PAYMENT_BELOW_MINIMUM: 'PAYMENT_BELOW_MINIMUM',
+    PAYMENT_LIMIT_EXCEEDED: 'PAYMENT_LIMIT_EXCEEDED',
+    INSUFFICIENT_BALANCE: 'INSUFFICIENT_BALANCE',
+    MINIMUM_BALANCE_REQUIRED: 'MINIMUM_BALANCE_REQUIRED',
+    CARD_FROZEN: 'CARD_FROZEN',
+    CARD_EXPIRED: 'CARD_EXPIRED',
+    ACCOUNT_NOT_READY: 'ACCOUNT_NOT_READY',
+    MERCHANT_UNAVAILABLE: 'MERCHANT_UNAVAILABLE',
+    INVALID_BALANCE_SCHEMA: 'INVALID_BALANCE_SCHEMA',
+    PAYMENT_CONFLICT: 'PAYMENT_CONFLICT',
+    PAYMENT_UNAVAILABLE: 'PAYMENT_UNAVAILABLE',
+  },
   PAYMENT_INTENT_OUTCOMES: {
     CREATED: 'CREATED',
     FOUND: 'FOUND',
@@ -44,8 +70,10 @@ paymentServiceStub.exports = {
     ROLE_FORBIDDEN: 'ROLE_FORBIDDEN',
     NOT_FOUND: 'NOT_FOUND',
   },
+  confirmPaymentIntent: (...args) => confirmPaymentIntent(...args),
   createPaymentIntent: (...args) => createPaymentIntent(...args),
   getPaymentIntent: (...args) => getPaymentIntent(...args),
+  getPaymentStatus: (...args) => getPaymentStatus(...args),
   previewPaymentIntent: (...args) => previewPaymentIntent(...args),
 };
 require.cache[paymentServicePath] = paymentServiceStub;
@@ -159,6 +187,97 @@ test('preview route authenticates and returns the expected response envelope', a
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.success, true);
   assert.equal(res.body.data.paymentIntent.paymentReference, 'preview-reference');
+});
+
+test('confirmation route authenticates and remains distinct from merchant routes', async () => {
+  verifyIdToken = async () => ({
+    uid: 'customer1',
+    email: 'customer@example.test',
+    email_verified: true,
+  });
+  confirmPaymentIntent = async ({ uid, paymentReference }) => {
+    assert.equal(uid, 'customer1');
+    assert.equal(paymentReference, 'confirmed-reference');
+    return {
+      outcome: 'SUCCEEDED',
+      payment: { paymentReference },
+    };
+  };
+
+  const res = await invokeRoute(
+    '/payment-intents/:paymentReference/confirm',
+    'post',
+    {
+      headers: { authorization: 'Bearer valid-customer-token' },
+      params: { paymentReference: 'confirmed-reference' },
+      body: {},
+    },
+  );
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.payment.paymentReference, 'confirmed-reference');
+});
+
+test('payment-status route rejects missing and invalid Firebase authentication', async () => {
+  let statusCalled = false;
+  getPaymentStatus = async () => {
+    statusCalled = true;
+  };
+
+  const missing = await invokeRoute(
+    '/payment-intents/:paymentReference/payment-status',
+    'get',
+    {
+      headers: {},
+      params: { paymentReference: 'status-reference' },
+    },
+  );
+  assert.equal(missing.statusCode, 401);
+
+  verifyIdToken = async () => {
+    throw new Error('invalid token');
+  };
+  const invalid = await invokeRoute(
+    '/payment-intents/:paymentReference/payment-status',
+    'get',
+    {
+      headers: { authorization: 'Bearer invalid-token' },
+      params: { paymentReference: 'status-reference' },
+    },
+  );
+  assert.equal(invalid.statusCode, 401);
+  assert.equal(statusCalled, false);
+});
+
+test('payment-status route returns the service response', async () => {
+  verifyIdToken = async () => ({
+    uid: 'customer1',
+    email: 'customer@example.test',
+    email_verified: true,
+  });
+  getPaymentStatus = async ({ uid, paymentReference }) => {
+    assert.equal(uid, 'customer1');
+    assert.equal(paymentReference, 'status-reference');
+    return {
+      outcome: 'FOUND',
+      payment: { paymentReference, status: 'PENDING' },
+    };
+  };
+
+  const res = await invokeRoute(
+    '/payment-intents/:paymentReference/payment-status',
+    'get',
+    {
+      headers: { authorization: 'Bearer valid-customer-token' },
+      params: { paymentReference: 'status-reference' },
+    },
+  );
+
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(res.body.data.payment, {
+    paymentReference: 'status-reference',
+    status: 'PENDING',
+  });
 });
 
 test('original merchant create and lookup routes remain operational', async () => {

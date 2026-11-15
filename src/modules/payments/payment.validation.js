@@ -71,11 +71,29 @@ function validateCreatePaymentIntentInput(body) {
   };
 }
 
+function validateConfirmPaymentIntentInput(body) {
+  // An omitted body is supported and is equivalent to an empty JSON object.
+  if (body === undefined) {
+    return { value: {} };
+  }
+
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+    return { error: 'Confirmation request body must be an empty JSON object' };
+  }
+
+  if (Object.keys(body).length > 0) {
+    return { error: 'Confirmation request body must not contain payment data' };
+  }
+
+  return { value: {} };
+}
+
 module.exports = {
   DEFAULT_EXPIRY_SECONDS,
   MAX_DESCRIPTION_LENGTH,
   MAX_EXPIRY_SECONDS,
   MIN_EXPIRY_SECONDS,
   PAYMENT_CURRENCY,
+  validateConfirmPaymentIntentInput,
   validateCreatePaymentIntentInput,
 };
