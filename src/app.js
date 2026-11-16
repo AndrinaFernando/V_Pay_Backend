@@ -6,6 +6,7 @@ const cardRoutes = require('./modules/cards/card.routes');
 const paymentRoutes = require('./modules/payments/payment.routes');
 const topupRoutes = require('./modules/topups/topup.routes');
 const notificationRoutes = require('./modules/notifications/notification.routes');
+const merchantRoutes = require('./modules/merchant/merchant.routes');
 
 const app = express();
 
@@ -24,5 +25,6 @@ app.use('/api', cardRoutes);
 app.use('/api', paymentRoutes);
 app.use('/api', topupRoutes);
 app.use('/api', notificationRoutes);
+app.use('/api', merchantRoutes);
 
 module.exports = app;

@@ -59,7 +59,7 @@ All claims for a token touch its deterministic ownership document, and competing
 
 The invariants assume controlled legacy migration and exclusively trusted backend writers. A registry cannot discover all historical duplicate profile fields without migration. Legacy profile-only tokens are never eligible to send, even before cleanup. A fully transactional reverse query over users is an alternative, but requires indexed token lookup and potentially many duplicate profile updates; the registry provides bounded document coordination.
 
-Firestore rules must deny client reads/writes of `fcmTokenOwners` and client writes to profile notification fields, including on profile creation. Verify the deployed rules: this repository does not contain them, and this task does not deploy any. Ordinary `GET /api/me` and bootstrap responses omit `fcmToken` without altering stored profiles or card data.
+Firestore rules must deny client reads/writes of `fcmTokenOwners` and client writes to profile notification fields, including on profile creation. Verify the deployed rules: this repository does not contain them, and this task does not deploy any. Ordinary `GET /api/me`, `PATCH /api/me`, and bootstrap responses omit `fcmToken` without altering stored tokens or card data. Profile editing retains development's field validation and cannot write `fcmToken`.
 
 ## Token registration
 
@@ -179,15 +179,17 @@ Expect a notification interruption until clients register again. Existing helper
 
 ## Branch integration notes
 
-Implementation started on clean `feature/notification-token-security` at `7f475e9`, matching locally recorded `feature/notifications` and `origin/feature/notifications`. Locally recorded `origin/development` is `f2c60b7` (20 development-only commits and one notification-only commit); the local `development` branch is older. GitHub was unreachable during review, so remote freshness was not confirmed.
+The security implementation was committed at `07ef34a`, following the original notification service at `7f475e9`. Integration started on clean `feature/notification-token-security` at `07ef34a`, matching its remote branch, with no stash or pending Git operation. `git fetch origin --prune` succeeded and fetched development at `80b465923d39500b566c8110c6202c37989094be` (profile-edit API merge). Before integration there were 23 development-only commits and two feature-only commits.
 
-The existing notification branch and development both changed `src/app.js`; a future integration must retain both merchant and notification routers. Development also has newer user/merchant provisioning in `user.service.js`; this change leaves that service alone and filters tokens at the controller response boundary. No merge, rebase, payment hook, or financial implementation change is included. Owners must coordinate post-commit notification hooks and deduplication separately.
+Development was merged with `--no-ff --no-commit`. The only Git conflict, `src/app.js`, was resolved by retaining both merchant and notification imports/mounts. The automatically merged user controller retains profile editing and now filters its PATCH response through the same token-removal helper as GET/bootstrap. Added tests cover combined application route mounting and profile-edit token privacy/rejection. Financial services, authentication, profile provisioning/validation, and Firestore indexes remain identical to fetched development. The notification service/routes and existing notification tests remain unchanged from `07ef34a`.
+
+The merge is resolved and staged but deliberately uncommitted. No rebase, reset, push, deployment, or production data operation was performed. Payment success paths in `src/modules/payments/payment.service.js` (Member 4) and top-up success/reconciliation paths in `src/modules/topups/topup.service.js` (Member 2) still do not call notification helpers. Owners must coordinate post-commit hooks and duplicate-attempt handling separately; this integration does not add financial triggers.
 
 ## Validation
 
-Run `npm test` from the backend repository. The notification unit suite uses fake Firestore/Messaging plus the real authentication middleware with a fake ID-token verifier and local HTTP requests. Profile privacy tests exercise both ordinary profile response paths with fake service data. No real Firebase credentials or push sends are required.
+Run `npm test` from the backend repository. The notification unit suite uses fake Firestore/Messaging plus the real authentication middleware with a fake ID-token verifier and local HTTP requests. Profile privacy tests cover GET/bootstrap plus the real PATCH service/controller with fake Firestore data. An application-level test checks that notification and development routes remain mounted behind authentication. No real Firebase credentials or push sends are required.
 
-Validated result: **78 tests, 74 passed, 0 failed, 4 skipped**. The initial sandboxed targeted run could not spawn Node test processes (`EPERM`); the full `npm test` run succeeded outside that sandbox. Three new notification concurrency tests and the existing top-up emulator test were skipped because no Firestore Emulator was configured. No real Firestore concurrency result is claimed from the serialized fake.
+After development integration, `npm test` passed with **246 tests, 242 passed, 0 failed, 4 skipped, 2 suites**. The four skipped tests are the three notification concurrency tests and the top-up emulator test. The QR-payment and merchant-wallet provisioning emulator suites are also skipped as suites; their child tests are not included in the executed test count. No Firestore Emulator was configured. The earlier 74-pass result predates integration. No real Firestore concurrency result is claimed from the serialized fake.
 
 The optional notification emulator tests cover competing accounts for one token, competing tokens for one account, and stale logout racing renewal/transfer. They refuse any host except `127.0.0.1:8188`, use only project `demo-vpay-notifications`, create unique test documents, and clean up only those documents. Start a local Firestore Emulator on that address, then run:
 
@@ -196,4 +198,12 @@ $env:FIRESTORE_EMULATOR_HOST = '127.0.0.1:8188'
 node --test test/modules/notifications/notification.emulator.test.js
 ```
 
-The existing full-suite top-up emulator test uses the same host with a separate demo project. Run the emulator tests before deployment; this repository's initial CI on development does not provision an emulator. No 30-day expiry policy is implemented.
+Development's QR-payment, top-up, and merchant-wallet provisioning emulator tests require the same host plus `FIRESTORE_EMULATOR_PROJECT_ID=demo-vpay-test`. Their safety guards are unchanged. To include those tests with a running local emulator:
+
+```powershell
+$env:FIRESTORE_EMULATOR_HOST = '127.0.0.1:8188'
+$env:FIRESTORE_EMULATOR_PROJECT_ID = 'demo-vpay-test'
+npm test
+```
+
+The notification suite uses its separate `demo-vpay-notifications` project on that local emulator. Real transaction contention still needs verification for ownership claims, same-user replacement, stale logout, QR confirmation/spending, top-up replay, and wallet provisioning. Run emulator tests before deployment; the current CI does not provision an emulator. No 30-day expiry policy is implemented.

@@ -2,6 +2,8 @@ const {
   BOOTSTRAP_OUTCOMES,
   bootstrapUser,
   getUserByUid,
+  updateUserProfile,
+  PROFILE_UPDATE_OUTCOMES,
 } = require('./user.service');
 const { validateBootstrapInput } = require('./user.validation');
 
@@ -100,7 +102,57 @@ async function getMe(req, res) {
   }
 }
 
+async function updateMe(req, res) {
+  try {
+    const { uid, emailVerified } = req.user;
+
+    if (emailVerified !== true) {
+      return res.status(403).json({
+        success: false,
+        message: 'Email verification is required',
+      });
+    }
+
+    const result = await updateUserProfile(uid, req.body);
+
+    if (result.outcome === PROFILE_UPDATE_OUTCOMES.NOT_FOUND) {
+      return res.status(404).json({
+        success: false,
+        message: 'VPay user profile not found',
+      });
+    }
+
+    if (result.outcome === PROFILE_UPDATE_OUTCOMES.ROLE_FORBIDDEN) {
+      return res.status(403).json({
+        success: false,
+        message: 'Account role is not authorized for profile editing',
+      });
+    }
+
+    if (result.outcome === PROFILE_UPDATE_OUTCOMES.INVALID_INPUT) {
+      return res.status(400).json({
+        success: false,
+        message: result.error,
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Profile updated successfully',
+      data: { user: publicUser(result.user) },
+    });
+  } catch (error) {
+    console.error('User profile update failed:', error.message);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to update user profile',
+    });
+  }
+}
+
 module.exports = {
   bootstrap,
   getMe,
+  updateMe,
 };
