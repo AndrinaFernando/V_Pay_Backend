@@ -108,6 +108,10 @@ function validateListCustomerTransactionsQuery(query) {
   return validateListPaymentIntentsQuery(query);
 }
 
+function validateListMerchantTransactionsQuery(query) {
+  return validateListPaymentIntentsQuery(query);
+}
+
 function validateConfirmPaymentIntentInput(body) {
   // An omitted body is supported and is equivalent to an empty JSON object.
   if (body === undefined) {
@@ -137,5 +141,6 @@ module.exports = {
   validateConfirmPaymentIntentInput,
   validateCreatePaymentIntentInput,
   validateListCustomerTransactionsQuery,
+  validateListMerchantTransactionsQuery,
   validateListPaymentIntentsQuery,
 };

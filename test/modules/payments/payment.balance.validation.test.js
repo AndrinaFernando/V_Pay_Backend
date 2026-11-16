@@ -56,7 +56,10 @@ test('enforces the Rs. 500 retained balance at exact integer boundaries', () => 
   const cases = [
     [200_000, 100_000, VALID, 100_000],
     [200_000, 150_000, VALID, 50_000],
+    [100_000, 50_000, VALID, 50_000],
+    [100_000, 50_001, MINIMUM_BALANCE_REQUIRED],
     [200_000, 150_100, MINIMUM_BALANCE_REQUIRED],
+    [50_050, 50, VALID, 50_000],
     [50_000, 1_000, MINIMUM_BALANCE_REQUIRED],
     [51_000, 1_000, VALID, 50_000],
     [40_000, 1_000, MINIMUM_BALANCE_REQUIRED],

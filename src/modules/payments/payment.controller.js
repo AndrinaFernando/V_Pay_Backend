@@ -7,12 +7,14 @@ const {
   listPaymentIntents,
   getPaymentStatus,
   listCustomerTransactions,
+  listMerchantTransactions,
   previewPaymentIntent,
 } = require('./payment.service');
 const {
   validateConfirmPaymentIntentInput,
   validateCreatePaymentIntentInput,
   validateListCustomerTransactionsQuery,
+  validateListMerchantTransactionsQuery,
   validateListPaymentIntentsQuery,
 } = require('./payment.validation');
 
@@ -296,6 +298,34 @@ async function listCustomerTransactionHistory(req, res) {
   }
 }
 
+async function listMerchantTransactionHistory(req, res) {
+  if (req.user.emailVerified !== true) {
+    return res.status(403).json({ success: false, message: 'Email verification is required' });
+  }
+
+  const validation = validateListMerchantTransactionsQuery(req.query);
+  if (validation.error) {
+    return res.status(400).json({ success: false, message: validation.error });
+  }
+
+  try {
+    const result = await listMerchantTransactions({ uid: req.user.uid, ...validation.value });
+    if (result.outcome === PAYMENT_INTENT_OUTCOMES.ROLE_FORBIDDEN) {
+      return res.status(403).json({
+        success: false,
+        message: 'Only active merchant accounts can access merchant transactions',
+      });
+    }
+    if (result.outcome !== PAYMENT_INTENT_OUTCOMES.LISTED) {
+      return sendServiceError(res, result.outcome);
+    }
+    return res.status(200).json({ success: true, data: { transactions: result.transactions } });
+  } catch {
+    console.error('Merchant transaction listing failed');
+    return res.status(500).json({ success: false, message: 'Unable to retrieve merchant transactions' });
+  }
+}
+
 async function confirmByReference(req, res) {
   if (req.user.emailVerified !== true) {
     return res.status(403).json({
@@ -374,5 +404,6 @@ module.exports = {
   getPaymentStatusByReference,
   list,
   listCustomerTransactionHistory,
+  listMerchantTransactionHistory,
   previewByReference,
 };

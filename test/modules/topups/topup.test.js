@@ -65,6 +65,73 @@ test('failure, cancellation and timeout are recorded without credit', async () =
   }
 });
 
+test('repeated non-success callbacks remain terminal without credit or a transaction', async () => {
+  for (const status of ['FAILED', 'CANCELLED', 'TIMEOUT']) {
+    const { db, service } = setup();
+    await service.start({ uid: 'u1', amount: 100 });
+    const result = { ...event, status };
+    await service.applyEvent(result);
+    await service.applyEvent(result);
+    await service.applyEvent({ ...result, eventId: `repeat_${status}` });
+    assert.equal(db.records.get('topups/topup1').status, status);
+    assert.equal(db.records.get('cards/u1').balance, 50.25);
+    assert.equal(db.records.has('transactions/topup_topup1'), false);
+  }
+});
+
+test('success callbacks with different event IDs credit the same top-up only once', async () => {
+  const { db, service } = setup();
+  await service.start({ uid: 'u1', amount: 100 });
+  await Promise.all([
+    service.applyEvent(event),
+    service.applyEvent({ ...event, eventId: 'second_event' }),
+  ]);
+  assert.equal(db.records.get('cards/u1').balance, 170.25);
+  assert.equal(db.records.get('topups/topup1').status, 'SUCCESS');
+  assert.equal(db.records.get('transactions/topup_topup1').amount, 120);
+  assert.equal([...db.records.keys()].filter(key => key.startsWith('transactions/')).length, 1);
+});
+
+for (const [field, changedValue] of [['status', 'SUCCESS'], ['amount', 121]]) {
+  test(`replayed event ID with changed ${field} is rejected without a credit`, async () => {
+    const { db, service } = setup();
+    await service.start({ uid: 'u1', amount: 100 });
+    const original = { ...event, status: 'FAILED' };
+    await service.applyEvent(original);
+    const replay = await Promise.allSettled([service.applyEvent({ ...original, [field]: changedValue })]);
+    assert.equal(db.records.get('cards/u1').balance, 50.25);
+    assert.equal(db.records.get('topups/topup1').status, 'FAILED');
+    assert.equal(db.records.has('transactions/topup_topup1'), false);
+    assert.equal(replay[0].status, 'rejected', `changed ${field} must be treated as a conflicting event`);
+    assert.equal(replay[0].reason.status, 409);
+  });
+}
+
+test('concurrent callback and reconciliation credit one transaction', async () => {
+  const { db, service, gateway } = setup();
+  await service.start({ uid: 'u1', amount: 100 });
+  let releaseSession;
+  let signalSession;
+  const enteredSession = new Promise(resolve => { signalSession = resolve; });
+  const sessionGate = new Promise(resolve => { releaseSession = resolve; });
+  gateway.getSession = async () => {
+    signalSession();
+    await sessionGate;
+    return { ...event };
+  };
+  gateway.getPayment = async () => ({ ...event });
+  const reconciliation = service.get({ uid: 'u1', id: 'topup1' });
+  await enteredSession;
+  const callback = service.applyEvent({ ...event, eventId: 'callback_event' });
+  releaseSession();
+  const [callbackResult, reconciled] = await Promise.all([callback, reconciliation]);
+  assert.equal(callbackResult.status, 'SUCCESS');
+  assert.equal(reconciled.status, 'SUCCESS');
+  assert.equal(db.records.get('cards/u1').balance, 170.25);
+  assert.equal(db.records.get('transactions/topup_topup1').amount, 120);
+  assert.equal([...db.records.keys()].filter(key => key.startsWith('transactions/')).length, 1);
+});
+
 test('mismatched session, amount, currency and late conflicting events do not change balance', async () => {
   const { db, service } = setup();
   await service.start({ uid: 'u1', amount: 100 });
@@ -85,6 +152,49 @@ test('status reconciliation checks matching Rupio session and payment before cre
   assert.equal((await service.get({ uid: 'u1', id: 'topup1' })).status, 'SUCCESS');
   assert.equal(db.records.get('cards/u1').balance, 170.25);
   await assert.rejects(service.get({ uid: 'someone_else', id: 'topup1' }), /not found/);
+});
+
+test('pending recovery keeps its status and balance when Rupio is unavailable', async () => {
+  const { db, service, gateway } = setup();
+  await service.start({ uid: 'u1', amount: 100 });
+  gateway.getSession = async () => { throw new Error('temporary gateway outage'); };
+  assert.equal((await service.get({ uid: 'u1', id: 'topup1' })).status, 'PENDING');
+  assert.equal(db.records.get('topups/topup1').status, 'PENDING');
+  assert.equal(db.records.get('cards/u1').balance, 50.25);
+  assert.equal(db.records.has('transactions/topup_topup1'), false);
+});
+
+test('incomplete or nonterminal Rupio sessions do not invent a final result', async () => {
+  for (const session of [null, { ...event, status: 'PENDING' }, { ...event, paymentId: null }]) {
+    const { db, service, gateway } = setup();
+    await service.start({ uid: 'u1', amount: 100 });
+    let paymentLookups = 0;
+    gateway.getSession = async () => session;
+    gateway.getPayment = async () => { paymentLookups++; return { ...event }; };
+    assert.equal((await service.get({ uid: 'u1', id: 'topup1' })).status, 'PENDING');
+    assert.equal(db.records.get('topups/topup1').status, 'PENDING');
+    assert.equal(db.records.get('cards/u1').balance, 50.25);
+    assert.equal(db.records.has('transactions/topup_topup1'), false);
+    assert.equal(paymentLookups, 0);
+  }
+});
+
+test('delayed success finalizes once and a finalized top-up is not reconciled again', async () => {
+  const { db, service, gateway } = setup();
+  await service.start({ uid: 'u1', amount: 100 });
+  gateway.getSession = async () => { throw new Error('temporary gateway outage'); };
+  assert.equal((await service.get({ uid: 'u1', id: 'topup1' })).status, 'PENDING');
+  await service.applyEvent(event);
+  await service.applyEvent(event);
+  let lookupsAfterFinalization = 0;
+  gateway.getSession = async () => { lookupsAfterFinalization++; return { ...event }; };
+  assert.equal((await service.get({ uid: 'u1', id: 'topup1' })).status, 'SUCCESS');
+  assert.equal(lookupsAfterFinalization, 0);
+  await assert.rejects(service.applyEvent({ ...event, eventId: 'conflicting', status: 'FAILED' }), { status: 409 });
+  assert.equal(db.records.get('cards/u1').balance, 170.25);
+  assert.equal(db.records.get('topups/topup1').status, 'SUCCESS');
+  assert.equal(db.records.get('transactions/topup_topup1').amount, 120);
+  assert.equal([...db.records.keys()].filter(key => key.startsWith('transactions/')).length, 1);
 });
 
 test('callback signatures use the exact raw bytes and reject tampering', () => {
