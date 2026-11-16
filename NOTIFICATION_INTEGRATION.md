@@ -207,3 +207,22 @@ npm test
 ```
 
 The notification suite uses its separate `demo-vpay-notifications` project on that local emulator. Real transaction contention still needs verification for ownership claims, same-user replacement, stale logout, QR confirmation/spending, top-up replay, and wallet provisioning. Run emulator tests before deployment; the current CI does not provision an emulator. No 30-day expiry policy is implemented.
+
+## Post-commit payment hooks
+
+The QR payment and Rupio top-up services now trigger notifications only after a
+successful Firestore commit. The payer receives `PAYMENT_SUCCESS`, the merchant
+receives `PAYMENT_RECEIVED`, and a newly successful top-up sends
+`TOP_UP_SUCCESS` to its customer. Repeated confirmations, callbacks, and
+reconciliation do not repeat the notification attempt. FCM errors do not alter
+the committed result or balance. Delivery remains best effort: a process crash
+after commit but before FCM send can lose the alert, and FCM does not guarantee
+exactly-once presentation. The Android message has a generic OS notification
+with no financial or account details; the app loads authoritative data from
+authenticated APIs after verifying its current binding.
+
+Notification attempts have a 250 ms response budget after commit. If FCM is
+still pending, the payment or webhook response continues while the send is
+observed in the background. The SDK operation cannot be cancelled, and a
+process exit can still lose the alert. Repeated payment requests do not retry
+the alert because the financial result is already terminal.
