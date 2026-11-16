@@ -7,6 +7,11 @@ const {
 } = require('./user.service');
 const { validateBootstrapInput } = require('./user.validation');
 
+function publicUser(user) {
+  const { fcmToken, ...profile } = user;
+  return profile;
+}
+
 async function bootstrap(req, res) {
   try {
     const { uid, email, emailVerified } = req.user;
@@ -47,7 +52,7 @@ async function bootstrap(req, res) {
       success: true,
       message: 'User bootstrap completed',
       data: {
-        user: result.user,
+        user: publicUser(result.user),
         card: result.card,
       },
     });
@@ -84,7 +89,7 @@ async function getMe(req, res) {
     return res.status(200).json({
       success: true,
       data: {
-        user,
+        user: publicUser(user),
       },
     });
   } catch (error) {
@@ -134,7 +139,7 @@ async function updateMe(req, res) {
     return res.status(200).json({
       success: true,
       message: 'Profile updated successfully',
-      data: { user: result.user },
+      data: { user: publicUser(result.user) },
     });
   } catch (error) {
     console.error('User profile update failed:', error.message);

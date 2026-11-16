@@ -123,6 +123,7 @@ test('PATCH /api/me validates and updates only the authenticated profile', async
       ['status change', 'customer', { status: 'SUSPENDED' }],
       ['createdAt change', 'customer', { createdAt: 'new-time' }],
       ['balance change', 'customer', { balance: 999 }],
+      ['FCM token change', 'customer', { fcmToken: 'unverified-token' }],
       ['invalid category', 'merchant', { businessCategory: 'Not a category' }],
       ['short business name', 'merchant', { businessName: 'X' }],
       ['long business name', 'merchant', { businessName: 'X'.repeat(101) }],
@@ -141,6 +142,22 @@ test('PATCH /api/me validates and updates only the authenticated profile', async
         assert.equal(writes.length, 0);
       });
     }
+
+    await t.test('profile editing preserves stored FCM tokens but never returns them', async () => {
+      for (const token of ['customer', 'merchant']) {
+        resetProfiles();
+        const id = `${token}-uid`;
+        profiles.get(id).fcmToken = 'private-device-token';
+        const before = { ...profiles.get(id) };
+        const result = await patch(base, token, { name: 'Updated Name' });
+        assert.equal(result.status, 200);
+        const { fcmToken, ...publicProfile } = before;
+        assert.deepEqual(result.body.data.user, { ...publicProfile, name: 'Updated Name', uid: id });
+        assert.equal(JSON.stringify(result.body).includes(fcmToken), false);
+        assert.deepEqual(profiles.get(id), { ...before, name: 'Updated Name' });
+        assert.deepEqual(writes, [{ id, fields: { name: 'Updated Name' } }]);
+      }
+    });
 
     await t.test('missing and invalid authentication', async () => {
       resetProfiles();
