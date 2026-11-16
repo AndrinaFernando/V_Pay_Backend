@@ -89,6 +89,22 @@ async function bootstrapUser({
         );
       }
 
+      let hasFinancialHistory = false;
+      if (role === 'MERCHANT' && existingUser && !merchantAccountSnapshot.exists) {
+        const history = await transaction.get(
+          db.collection('transactions').where('merchantUid', '==', uid).limit(1),
+        );
+        hasFinancialHistory = !history.empty;
+        if (!hasFinancialHistory) {
+          const intents = await transaction.get(
+            db.collection('paymentIntents').where('merchantUid', '==', uid),
+          );
+          hasFinancialHistory = intents.docs.some(
+            (intent) => intent.data().status === 'SUCCESS',
+          );
+        }
+      }
+
       const profileCreated = !existingUser;
 
       if (!existingUser) {
@@ -116,8 +132,9 @@ async function bootstrapUser({
 
       if (
         role === 'MERCHANT' &&
-        profileCreated &&
-        !merchantAccountSnapshot.exists
+        !merchantAccountSnapshot.exists &&
+        (!existingUser || existingUser.status === 'ACTIVE') &&
+        !hasFinancialHistory
       ) {
         transaction.set(merchantAccountRef, {
           balanceMinor: 0,

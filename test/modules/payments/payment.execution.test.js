@@ -272,7 +272,41 @@ test('enforces retained-balance outcomes during payment execution', async () => 
       scenario.collections.transactions.size,
       outcome === PAYMENT_EXECUTION_OUTCOMES.SUCCEEDED ? 1 : 0,
     );
+    assert.equal(
+      scenario.collections.paymentIntents.get(scenario.paymentReference).status,
+      outcome === PAYMENT_EXECUTION_OUTCOMES.SUCCEEDED
+        ? PAYMENT_INTENT_STATUS.SUCCESS
+        : PAYMENT_INTENT_STATUS.PENDING,
+    );
   }
+});
+
+test('concurrent distinct payments cannot spend below the retained balance', async () => {
+  const scenario = makeScenario();
+  const first = scenario.collections.paymentIntents.get(scenario.paymentReference);
+  first.amountMinor = 40_000;
+  scenario.collections.paymentIntents.set('second-intent', { ...first });
+
+  const results = await Promise.all([
+    confirm(scenario),
+    scenario.service.confirmPaymentIntent({
+      uid: 'customer1', paymentReference: 'second-intent',
+    }),
+  ]);
+
+  assert.deepEqual(results.map(({ outcome }) => outcome).sort(), [
+    PAYMENT_EXECUTION_OUTCOMES.MINIMUM_BALANCE_REQUIRED,
+    PAYMENT_EXECUTION_OUTCOMES.SUCCEEDED,
+  ].sort());
+  assert.equal(scenario.collections.cards.get('customer1').balance, 600);
+  assert.equal(scenario.collections.merchantAccounts.get('merchant1').balanceMinor, 50_000);
+  assert.equal(scenario.collections.transactions.size, 1);
+  assert.equal(
+    [...scenario.collections.paymentIntents.values()].filter(
+      (intent) => intent.status === PAYMENT_INTENT_STATUS.SUCCESS,
+    ).length,
+    1,
+  );
 });
 
 test('rejects insufficient balance without changing financial documents', async () => {
