@@ -48,6 +48,36 @@ function fakeFirestore() {
   };
 }
 
+test('history lists only the owner, newest first, limited to 100 with stored results', async () => {
+  const db = fakeFirestore();
+  const statuses = ['SUCCESS', 'FAILED', 'TIMEOUT', 'CANCELLED', 'PENDING'];
+  for (let i = 0; i < 105; i++) {
+    const status = statuses[i % statuses.length];
+    db.records.set(`topups/owner_${i}`, {
+      uid: 'customer', status, requestedAmount: 100,
+      ...(status === 'SUCCESS' && { amount: 120 }),
+      currency: 'LKR', createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, i)),
+    });
+  }
+  db.records.set('topups/other', {
+    uid: 'someone-else', status: 'SUCCESS', requestedAmount: 999,
+    amount: 999, currency: 'LKR', createdAt: new Date('2030-01-01T00:00:00Z'),
+  });
+  const service = createTopupService({ db, gateway: {} });
+  const history = await service.list({ uid: 'customer' });
+  assert.equal(history.length, 100);
+  assert.deepEqual(history.map(item => item.id), Array.from({ length: 100 }, (_, index) => `owner_${104 - index}`));
+  assert.equal(history.some(item => item.id === 'other'), false);
+  for (const status of statuses) {
+    const item = history.find(entry => entry.status === status);
+    assert.ok(item, `${status} should be returned`);
+    if (status === 'SUCCESS') {
+      assert.equal(item.requestedAmount, 100);
+      assert.equal(item.amount, 120);
+    }
+  }
+});
+
 test('complete top-up HTTP flow: create session, signed callback, receipt, replay, and owner isolation', async () => {
   const db = fakeFirestore();
   let createRequest;
@@ -121,8 +151,18 @@ test('complete top-up HTTP flow: create session, signed callback, receipt, repla
     assert.equal(receipt.message, 'Test payment approved.');
     response = await fetch(`${base}/api/topups/${created.id}`, { headers: { Authorization: 'Bearer other' } });
     assert.equal(response.status, 404);
+    db.records.set('topups/other_user_topup', {
+      uid: 'someone-else', status: 'FAILED', requestedAmount: 50,
+      currency: 'LKR', createdAt: new Date('2030-01-01T00:00:00Z'),
+    });
     response = await fetch(`${base}/api/topups`, { headers: { Authorization: 'Bearer owner' } });
-    assert.equal((await response.json()).data.topups[0].status, 'SUCCESS');
+    assert.equal(response.status, 200);
+    const ownerHistory = (await response.json()).data.topups;
+    assert.deepEqual(ownerHistory.map(item => item.id), [created.id]);
+    assert.equal(ownerHistory[0].status, 'SUCCESS');
+    response = await fetch(`${base}/api/topups`, { headers: { Authorization: 'Bearer other' } });
+    assert.equal(response.status, 200);
+    assert.deepEqual((await response.json()).data.topups.map(item => item.id), ['other_user_topup']);
   } finally {
     await new Promise(resolve => server.close(resolve));
     delete require.cache[routerPath];
