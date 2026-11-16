@@ -53,6 +53,7 @@ async function bootstrapUser({
 }) {
   const userRef = db.collection('users').doc(uid);
   const cardRef = db.collection('cards').doc(uid);
+  const merchantAccountRef = db.collection('merchantAccounts').doc(uid);
   const profile = {
     name,
     phone,
@@ -78,9 +79,30 @@ async function bootstrapUser({
       }
 
       let cardSnapshot = null;
+      let merchantAccountSnapshot = null;
 
       if (role === 'CUSTOMER') {
         cardSnapshot = await transaction.get(cardRef);
+      } else if (role === 'MERCHANT') {
+        merchantAccountSnapshot = await transaction.get(
+          merchantAccountRef,
+        );
+      }
+
+      let hasFinancialHistory = false;
+      if (role === 'MERCHANT' && existingUser && !merchantAccountSnapshot.exists) {
+        const history = await transaction.get(
+          db.collection('transactions').where('merchantUid', '==', uid).limit(1),
+        );
+        hasFinancialHistory = !history.empty;
+        if (!hasFinancialHistory) {
+          const intents = await transaction.get(
+            db.collection('paymentIntents').where('merchantUid', '==', uid),
+          );
+          hasFinancialHistory = intents.docs.some(
+            (intent) => intent.data().status === 'SUCCESS',
+          );
+        }
       }
 
       const profileCreated = !existingUser;
@@ -106,6 +128,19 @@ async function bootstrapUser({
           cardRef,
           createInitialVirtualCardData(uid)
         );
+      }
+
+      if (
+        role === 'MERCHANT' &&
+        !merchantAccountSnapshot.exists &&
+        (!existingUser || existingUser.status === 'ACTIVE') &&
+        !hasFinancialHistory
+      ) {
+        transaction.set(merchantAccountRef, {
+          balanceMinor: 0,
+          currency: 'LKR',
+          status: 'ACTIVE',
+        });
       }
 
       return {
