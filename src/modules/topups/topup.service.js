@@ -15,7 +15,7 @@ function publicTopup(id, data) {
     createdAt: iso(data.createdAt), expiresAt: iso(data.expiresAt), completedAt: iso(data.completedAt) };
 }
 
-function createTopupService({ db, gateway, now = () => new Date() }) {
+function createTopupService({ db, gateway, now = () => new Date(), notifications = { notifyTopUpSuccess: async () => {} } }) {
   async function start({ uid, amount }) {
     if (!validAmount(amount)) throw fail('Enter a whole number of rupees from 1 to 1,000,000.');
     gateway.requireConfig();
@@ -62,7 +62,7 @@ function createTopupService({ db, gateway, now = () => new Date() }) {
     const eventKey = crypto.createHash('sha256').update(event.eventId).digest('hex');
     const eventRef = db.collection('rupioEvents').doc(eventKey);
     const transactionRef = db.collection('transactions').doc(`topup_${event.clientReference}`);
-    return db.runTransaction(async tx => {
+    const result = await db.runTransaction(async tx => {
       const topup = await tx.get(topupRef);
       const seen = await tx.get(eventRef);
       if (!topup.exists) throw fail('Top-up not found.', 404);
@@ -93,8 +93,15 @@ function createTopupService({ db, gateway, now = () => new Date() }) {
       }
       tx.create(eventRef, { topupId: topupRef.id, paymentId: event.paymentId, createdAt: completedAt });
       tx.update(topupRef, update);
-      return publicTopup(topupRef.id, { ...current, ...update });
+      return { ...publicTopup(topupRef.id, { ...current, ...update }),
+        notificationUid: event.status === 'SUCCESS' ? current.uid : null };
     });
+    const { notificationUid, ...topup } = result;
+    if (notificationUid) {
+      try { await notifications.notifyTopUpSuccess(notificationUid); }
+      catch { console.warn('Top-up notification unavailable.'); }
+    }
+    return topup;
   }
 
   async function get({ uid, id, reconcile = true }) {
@@ -127,6 +134,7 @@ function createTopupService({ db, gateway, now = () => new Date() }) {
 }
 
 function defaultService() {
-  return createTopupService({ db: require('../../config/firebase').db, gateway: require('./rupio.adapter').defaultAdapter() });
+  return createTopupService({ db: require('../../config/firebase').db, gateway: require('./rupio.adapter').defaultAdapter(),
+    notifications: require('../notifications/notification.service') });
 }
 module.exports = { createTopupService, defaultService, validAmount };

@@ -34,15 +34,37 @@ function memoryDb(seed) {
     },
   };
 }
-function setup() {
+function setup(notifications) {
   const db = memoryDb({ 'users/u1': { role: 'CUSTOMER', status: 'ACTIVE' }, 'cards/u1': { ownerId: 'u1', balance: 50.25 } });
   const gateway = {
     requireConfig() {},
     async startCheckout() { return { sessionId: 'rupio_sess_123', checkoutUrl: 'https://staging.example/checkout', expiresAt: '2030-01-01T00:00:00Z' }; },
   };
-  return { db, gateway, service: createTopupService({ db, gateway }) };
+  return { db, gateway, service: createTopupService({ db, gateway, notifications }) };
 }
 const event = { eventId: 'rupio_pay_123', paymentId: 'rupio_pay_123', sessionId: 'rupio_sess_123', clientReference: 'topup1', requestedAmount: 100, amount: 120, currency: 'LKR', status: 'SUCCESS', message: 'approved' };
+
+test('top-up notifies only on first successful commit and ignores FCM failure', async () => {
+  const sent = [];
+  const { db, service } = setup({ notifyTopUpSuccess: async uid => {
+    sent.push(uid);
+    throw Error('FCM offline');
+  } });
+  await service.start({ uid: 'u1', amount: 100 });
+  assert.equal((await service.applyEvent(event)).status, 'SUCCESS');
+  await service.applyEvent(event);
+  await service.applyEvent({ ...event, eventId: 'another_event' });
+  assert.deepEqual(sent, ['u1']);
+  assert.equal(db.records.get('cards/u1').balance, 170.25);
+});
+
+test('failed top-up never notifies', async () => {
+  const sent = [];
+  const { service } = setup({ notifyTopUpSuccess: async uid => sent.push(uid) });
+  await service.start({ uid: 'u1', amount: 100 });
+  await service.applyEvent({ ...event, status: 'FAILED' });
+  assert.deepEqual(sent, []);
+});
 
 test('verified success credits actual checkout amount and records exactly once, including concurrent duplicate callbacks', async () => {
   const { db, service } = setup();

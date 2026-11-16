@@ -104,6 +104,7 @@ function makeScenario({
   enabled = true,
   failCommits = 0,
   spendingLimitProvider,
+  notifications,
 } = {}) {
   const paymentReference = 'intent-reference';
   const { db, collections, collectionAccesses, writesRecorded } = makeFakeDb(
@@ -154,6 +155,7 @@ function makeScenario({
   if (spendingLimitProvider) {
     serviceOptions.spendingLimitProvider = spendingLimitProvider;
   }
+  if (notifications) serviceOptions.notifications = notifications;
   const service = createPaymentService(serviceOptions);
 
   return {
@@ -179,6 +181,30 @@ async function getStatus(scenario, uid = 'customer1') {
     paymentReference: scenario.paymentReference,
   });
 }
+
+test('post-commit notifications reach payer and merchant once and cannot fail payment', async () => {
+  const sent = [];
+  const scenario = makeScenario({ notifications: {
+    notifyPaymentSuccess: async uid => { sent.push(['PAYMENT_SUCCESS', uid]); throw Error('FCM offline'); },
+    notifyPaymentReceived: async uid => { sent.push(['PAYMENT_RECEIVED', uid]); return { status: 'MESSAGING_FAILED' }; },
+  } });
+  assert.equal((await confirm(scenario)).outcome, PAYMENT_EXECUTION_OUTCOMES.SUCCEEDED);
+  assert.equal((await confirm(scenario)).idempotent, true);
+  assert.deepEqual(sent, [['PAYMENT_SUCCESS', 'customer1'], ['PAYMENT_RECEIVED', 'merchant1']]);
+  assert.equal(scenario.collections.cards.get('customer1').balance, 874.5);
+  assert.equal(scenario.collections.merchantAccounts.get('merchant1').balanceMinor, 22550);
+});
+
+test('failed QR payment sends no notifications', async () => {
+  const sent = [];
+  const scenario = makeScenario({ notifications: {
+    notifyPaymentSuccess: async () => sent.push('payer'),
+    notifyPaymentReceived: async () => sent.push('merchant'),
+  } });
+  scenario.collections.cards.get('customer1').balance = 0;
+  assert.notEqual((await confirm(scenario)).outcome, PAYMENT_EXECUTION_OUTCOMES.SUCCEEDED);
+  assert.deepEqual(sent, []);
+});
 
 test('atomically executes a QR payment using integer LKR cents', async () => {
   const scenario = makeScenario();

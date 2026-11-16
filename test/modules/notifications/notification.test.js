@@ -92,7 +92,8 @@ for (const [fn, uid, type] of [
     assert.equal(f.sent.length, 1);
     assert.equal(f.sent[0].token, f.records.get(uid).fcmToken);
     assert.deepEqual(f.sent[0].data, { type, bindingId: f.owners.get(tokenHash(f.sent[0].token)).bindingId });
-    assert.deepEqual(Object.keys(f.sent[0]).sort(), ['data', 'token']);
+    assert.deepEqual(Object.keys(f.sent[0]).sort(), ['data', 'notification', 'token']);
+    assert.deepEqual(f.sent[0].notification, { title: 'VPay', body: 'Activity update. Open VPay to view details.' });
   });
 }
 

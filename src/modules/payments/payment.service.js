@@ -173,6 +173,7 @@ function createPaymentService({
   clock = () => new Date(),
   executionEnabled = isQrPaymentExecutionEnabled,
   spendingLimitProvider = getMaximumPaymentAmountMinor,
+  notifications = { notifyPaymentSuccess: async () => {}, notifyPaymentReceived: async () => {} },
 }) {
   if (!db) throw new TypeError('Firestore database is required');
 
@@ -473,7 +474,7 @@ function createPaymentService({
       .collection('transactions')
       .doc(transactionId);
 
-    return db.runTransaction(async (transaction) => {
+    const result = await db.runTransaction(async (transaction) => {
       const customerSnapshot = await transaction.get(customerRef);
       if (!customerSnapshot.exists) {
         return { outcome: PAYMENT_EXECUTION_OUTCOMES.ACCOUNT_NOT_READY };
@@ -750,6 +751,7 @@ function createPaymentService({
       return {
         outcome: PAYMENT_EXECUTION_OUTCOMES.SUCCEEDED,
         idempotent: false,
+        merchantUid: paymentIntent.merchantUid,
         payment: toPaymentConfirmation(
           paymentReference,
           transactionId,
@@ -761,6 +763,14 @@ function createPaymentService({
         ),
       };
     });
+    if (result.outcome === PAYMENT_EXECUTION_OUTCOMES.SUCCEEDED && !result.idempotent) {
+      await Promise.allSettled([
+        Promise.resolve().then(() => notifications.notifyPaymentSuccess(uid)),
+        Promise.resolve().then(() => notifications.notifyPaymentReceived(result.merchantUid)),
+      ]);
+    }
+    const { merchantUid, ...publicResult } = result;
+    return publicResult;
   }
 
   async function getPaymentStatus({ uid, paymentReference }) {
@@ -883,7 +893,7 @@ function createPaymentService({
 
 function getDefaultService() {
   const { db } = require('../../config/firebase');
-  return createPaymentService({ db });
+  return createPaymentService({ db, notifications: require('../notifications/notification.service') });
 }
 
 async function createPaymentIntent(input) {

@@ -52,6 +52,9 @@ function createNotificationService({ db, messaging }) {
       await messaging.send({
         token: recipient.token,
         data: { type, bindingId: recipient.bindingId },
+        // Android displays this generic alert in the background. Never put
+        // account or transaction details into an OS-displayed payload.
+        notification: { title: 'VPay', body: 'Activity update. Open VPay to view details.' },
       });
       return { status: 'SENT' };
     } catch (error) {
