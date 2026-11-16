@@ -95,7 +95,7 @@ test('does not call intent creation for an unverified account', async () => {
   await create(
     {
       user: { uid: 'verified-uid', emailVerified: false },
-      body: { amountMinor: 100, currency: 'LKR' },
+      body: { amountMinor: 1000, currency: 'LKR' },
     },
     res,
   );
@@ -114,7 +114,7 @@ test('returns a safe server error when Firestore creation fails', async () => {
   await create(
     {
       user: { uid: 'verified-uid', emailVerified: true },
-      body: { amountMinor: 100, currency: 'LKR' },
+      body: { amountMinor: 1000, currency: 'LKR' },
     },
     res,
   );
