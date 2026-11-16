@@ -71,6 +71,7 @@ function createTopupService({ db, gateway, now = () => new Date() }) {
       if (current.sessionId !== event.sessionId || current.requestedAmount !== event.requestedAmount || current.currency !== event.currency) throw fail('Rupio result does not match the top-up.', 409);
       if (seen.exists) {
         if (seen.data().topupId !== event.clientReference || seen.data().paymentId !== event.paymentId) throw fail('Conflicting event identifier.', 409);
+        if (current.paymentId !== event.paymentId || current.status !== event.status || current.amount !== event.amount) throw fail('Top-up already has a different final result.', 409);
         return publicTopup(topupRef.id, current);
       }
       if (FINAL.has(current.status)) {
