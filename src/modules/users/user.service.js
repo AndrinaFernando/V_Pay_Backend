@@ -4,11 +4,19 @@ const { db } = require('../../config/firebase');
 const {
   createInitialVirtualCardData,
 } = require('../cards/card.service');
+const { validateProfileUpdateInput } = require('./user.validation');
 
 const BOOTSTRAP_OUTCOMES = {
   CREATED: 'CREATED',
   EXISTING: 'EXISTING',
   ROLE_CONFLICT: 'ROLE_CONFLICT',
+};
+
+const PROFILE_UPDATE_OUTCOMES = {
+  UPDATED: 'UPDATED',
+  NOT_FOUND: 'NOT_FOUND',
+  ROLE_FORBIDDEN: 'ROLE_FORBIDDEN',
+  INVALID_INPUT: 'INVALID_INPUT',
 };
 
 function isMissingOnboardingField(value) {
@@ -147,8 +155,42 @@ async function getUserByUid(uid) {
   };
 }
 
+async function updateUserProfile(uid, body) {
+  const userRef = db.collection('users').doc(uid);
+
+  return db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(userRef);
+
+    if (!snapshot.exists) {
+      return { outcome: PROFILE_UPDATE_OUTCOMES.NOT_FOUND };
+    }
+
+    const existingUser = snapshot.data();
+    if (existingUser.role !== 'CUSTOMER' && existingUser.role !== 'MERCHANT') {
+      return { outcome: PROFILE_UPDATE_OUTCOMES.ROLE_FORBIDDEN };
+    }
+
+    const validation = validateProfileUpdateInput(body, existingUser.role);
+    if (validation.error) {
+      return {
+        outcome: PROFILE_UPDATE_OUTCOMES.INVALID_INPUT,
+        error: validation.error,
+      };
+    }
+
+    transaction.update(userRef, validation.value);
+
+    return {
+      outcome: PROFILE_UPDATE_OUTCOMES.UPDATED,
+      user: { ...existingUser, ...validation.value, uid: snapshot.id },
+    };
+  });
+}
+
 module.exports = {
   BOOTSTRAP_OUTCOMES,
+  PROFILE_UPDATE_OUTCOMES,
   bootstrapUser,
   getUserByUid,
+  updateUserProfile,
 };
