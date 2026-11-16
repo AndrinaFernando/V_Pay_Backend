@@ -131,7 +131,7 @@ test.describe('merchant wallet provisioning with the Firestore emulator', {
     });
   });
 
-  test('existing merchant without a wallet is not silently initialized', async () => {
+  test('existing active merchant without a wallet is initialized', async () => {
     const uid = `existing-merchant-${randomUUID()}`;
     const merchantRefs = refs(uid);
     await merchantRefs.user.set({
@@ -148,6 +148,10 @@ test.describe('merchant wallet provisioning with the Firestore emulator', {
     const wallet = await merchantRefs.wallet.get();
 
     assert.equal(result.outcome, 'EXISTING');
-    assert.equal(wallet.exists, false);
+    assert.deepEqual(wallet.data(), {
+      balanceMinor: 0,
+      currency: 'LKR',
+      status: 'ACTIVE',
+    });
   });
 });

@@ -22,6 +22,16 @@ function createFakeDb() {
   const db = {
     collection(collectionName) {
       return {
+        where(field, operator, value) {
+          assert.equal(operator, '==');
+          const query = { collectionName, field, value, query: true };
+          return {
+            ...query,
+            limit() {
+              return query;
+            },
+          };
+        },
         doc(id) {
           return {
             collectionName,
@@ -38,6 +48,15 @@ function createFakeDb() {
         const transaction = {
           async get(ref) {
             assert.equal(writeStarted, false, 'transaction reads must precede writes');
+            if (ref.query) {
+              const docs = [...records].filter(([recordKey, data]) =>
+                recordKey.startsWith(`${ref.collectionName}/`) &&
+                data[ref.field] === ref.value).map(([, data]) => ({ data: () => data }));
+              return {
+                docs,
+                empty: docs.length === 0,
+              };
+            }
             return snapshot(ref);
           },
           set(ref, data) {
@@ -211,8 +230,27 @@ test('existing merchant wallet is preserved exactly', async () => {
   assert.deepEqual(fake.records.get('merchantAccounts/merchant1'), wallet);
 });
 
-test('existing merchants without wallets are left for explicit migration', async () => {
-  for (const status of ['ACTIVE', 'SUSPENDED']) {
+test('existing active merchant without financial history receives a wallet', async () => {
+  fake.records.set('users/merchant1', {
+    role: 'MERCHANT', status: 'ACTIVE', name: 'Merchant Owner',
+    phone: '+94771234567', businessName: 'Test Merchant',
+    businessCategory: 'Retail', businessAddress: '1 Test Street',
+  });
+  const profile = fake.records.get('users/merchant1');
+  const result = await bootstrapUser(merchantInput());
+  assert.equal(result.outcome, BOOTSTRAP_OUTCOMES.EXISTING);
+  assert.deepEqual(fake.records.get('users/merchant1'), profile);
+  assert.deepEqual(fake.records.get('merchantAccounts/merchant1'), {
+    balanceMinor: 0, currency: 'LKR', status: 'ACTIVE',
+  });
+  await bootstrapUser(merchantInput());
+  assert.deepEqual(fake.records.get('merchantAccounts/merchant1'), {
+    balanceMinor: 0, currency: 'LKR', status: 'ACTIVE',
+  });
+});
+
+test('inactive merchants and merchants with financial history are not initialized', async () => {
+  for (const status of ['SUSPENDED', 'INACTIVE']) {
     fake.reset();
     fake.records.set('users/merchant1', {
       role: 'MERCHANT',
@@ -229,6 +267,15 @@ test('existing merchants without wallets are left for explicit migration', async
     assert.equal(result.outcome, BOOTSTRAP_OUTCOMES.EXISTING);
     assert.equal(fake.records.has('merchantAccounts/merchant1'), false);
   }
+  fake.reset();
+  fake.records.set('users/merchant1', { role: 'MERCHANT', status: 'ACTIVE' });
+  fake.records.set('transactions/payment1', { merchantUid: 'merchant1', status: 'SUCCESS' });
+  await bootstrapUser(merchantInput());
+  assert.equal(fake.records.has('merchantAccounts/merchant1'), false);
+  fake.records.delete('transactions/payment1');
+  fake.records.set('paymentIntents/payment1', { merchantUid: 'merchant1', status: 'SUCCESS' });
+  await bootstrapUser(merchantInput());
+  assert.equal(fake.records.has('merchantAccounts/merchant1'), false);
 });
 
 test('transaction failure rolls back both merchant profile and wallet', async () => {
