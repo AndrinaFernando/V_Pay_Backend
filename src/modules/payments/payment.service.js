@@ -297,6 +297,58 @@ function createPaymentService({
     };
   }
 
+  async function listMerchantTransactions({ uid, limit = 20 }) {
+    const merchantResult = await getMerchant(uid);
+    if (merchantResult.outcome) return merchantResult;
+
+    const snapshot = await db
+      .collection('transactions')
+      .where('merchantUid', '==', uid)
+      .where('type', '==', 'QR_PAYMENT')
+      .where('status', '==', PAYMENT_INTENT_STATUS.SUCCESS)
+      .orderBy('createdAt', 'desc')
+      .limit(limit)
+      .get();
+
+    const transactions = await Promise.all(snapshot.docs.map(async (document) => {
+      const record = document.data();
+      const paymentReference = record.paymentReference;
+      if (!isValidPaymentReference(paymentReference)) {
+        throw new Error('Invalid merchant transaction record');
+      }
+
+      const intentSnapshot = await db.collection('paymentIntents').doc(paymentReference).get();
+      if (!intentSnapshot.exists) {
+        throw new Error('Merchant transaction payment intent is missing');
+      }
+      const intent = intentSnapshot.data();
+      if (
+        record.merchantUid !== uid ||
+        intent.merchantUid !== uid ||
+        intent.status !== PAYMENT_INTENT_STATUS.SUCCESS ||
+        typeof intent.customerUid !== 'string' ||
+        intent.customerUid.length === 0 ||
+        !Number.isSafeInteger(record.amountMinor) ||
+        record.amountMinor <= 0 ||
+        record.currency !== PAYMENT_CURRENCY ||
+        !isConsistentQrTransaction(record, intent, paymentReference, intent.customerUid)
+      ) {
+        throw new Error('Merchant transaction is inconsistent');
+      }
+
+      return {
+        transactionId: document.id,
+        paymentReference,
+        amountMinor: record.amountMinor,
+        currency: record.currency,
+        status: record.status,
+        createdAt: toIsoString(record.createdAt),
+      };
+    }));
+
+    return { outcome: PAYMENT_INTENT_OUTCOMES.LISTED, transactions };
+  }
+
   function isValidPaymentReference(paymentReference) {
     return (
       typeof paymentReference === 'string' &&
@@ -823,6 +875,7 @@ function createPaymentService({
     getPaymentIntent,
     getPaymentStatus,
     listCustomerTransactions,
+    listMerchantTransactions,
     listPaymentIntents,
     previewPaymentIntent,
   };
@@ -849,6 +902,10 @@ async function listCustomerTransactions(input) {
   return getDefaultService().listCustomerTransactions(input);
 }
 
+async function listMerchantTransactions(input) {
+  return getDefaultService().listMerchantTransactions(input);
+}
+
 async function previewPaymentIntent(input) {
   return getDefaultService().previewPaymentIntent(input);
 }
@@ -872,6 +929,7 @@ module.exports = {
   getPaymentIntent,
   getPaymentStatus,
   listCustomerTransactions,
+  listMerchantTransactions,
   listPaymentIntents,
   previewPaymentIntent,
 };

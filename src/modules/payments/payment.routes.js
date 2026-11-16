@@ -10,6 +10,7 @@ const {
   getPaymentStatusByReference,
   list,
   listCustomerTransactionHistory,
+  listMerchantTransactionHistory,
   previewByReference,
 } = require('./payment.controller');
 
@@ -19,6 +20,7 @@ const router = express.Router();
 router.post('/payment-intents', authenticate, create);
 router.get('/payment-intents', authenticate, list);
 router.get('/payment-intents/:paymentReference', authenticate, getByReference);
+router.get('/merchant/transactions', authenticate, listMerchantTransactionHistory);
 
 // Customer payment operations
 router.get(
