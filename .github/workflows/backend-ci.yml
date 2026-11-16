@@ -1,0 +1,26 @@
+name: Backend CI
+
+on:
+  pull_request:
+    branches: [development, main]
+  push:
+    branches: [development, main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Install dependencies
+        run: npm ci
+      # Firestore Emulator integration tests are not covered by this initial CI.
+      # Their existing conditional skips remain active without an emulator.
+      - name: Run backend tests
+        run: npm test

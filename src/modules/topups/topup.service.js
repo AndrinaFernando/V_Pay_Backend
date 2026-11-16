@@ -1,4 +1,5 @@
 const crypto = require('node:crypto');
+const { deliverBestEffort } = require('../notifications/notification.delivery');
 
 const FINAL = new Set(['SUCCESS', 'FAILED', 'CANCELLED', 'TIMEOUT']);
 const validAmount = value => Number.isSafeInteger(value) && value > 0 && value <= 1000000;
@@ -15,7 +16,7 @@ function publicTopup(id, data) {
     createdAt: iso(data.createdAt), expiresAt: iso(data.expiresAt), completedAt: iso(data.completedAt) };
 }
 
-function createTopupService({ db, gateway, now = () => new Date() }) {
+function createTopupService({ db, gateway, now = () => new Date(), notifications = { notifyTopUpSuccess: async () => {} } }) {
   async function start({ uid, amount }) {
     if (!validAmount(amount)) throw fail('Enter a whole number of rupees from 1 to 1,000,000.');
     gateway.requireConfig();
@@ -62,7 +63,7 @@ function createTopupService({ db, gateway, now = () => new Date() }) {
     const eventKey = crypto.createHash('sha256').update(event.eventId).digest('hex');
     const eventRef = db.collection('rupioEvents').doc(eventKey);
     const transactionRef = db.collection('transactions').doc(`topup_${event.clientReference}`);
-    return db.runTransaction(async tx => {
+    const result = await db.runTransaction(async tx => {
       const topup = await tx.get(topupRef);
       const seen = await tx.get(eventRef);
       if (!topup.exists) throw fail('Top-up not found.', 404);
@@ -71,6 +72,7 @@ function createTopupService({ db, gateway, now = () => new Date() }) {
       if (current.sessionId !== event.sessionId || current.requestedAmount !== event.requestedAmount || current.currency !== event.currency) throw fail('Rupio result does not match the top-up.', 409);
       if (seen.exists) {
         if (seen.data().topupId !== event.clientReference || seen.data().paymentId !== event.paymentId) throw fail('Conflicting event identifier.', 409);
+        if (current.paymentId !== event.paymentId || current.status !== event.status || current.amount !== event.amount) throw fail('Top-up already has a different final result.', 409);
         return publicTopup(topupRef.id, current);
       }
       if (FINAL.has(current.status)) {
@@ -92,8 +94,14 @@ function createTopupService({ db, gateway, now = () => new Date() }) {
       }
       tx.create(eventRef, { topupId: topupRef.id, paymentId: event.paymentId, createdAt: completedAt });
       tx.update(topupRef, update);
-      return publicTopup(topupRef.id, { ...current, ...update });
+      return { ...publicTopup(topupRef.id, { ...current, ...update }),
+        notificationUid: event.status === 'SUCCESS' ? current.uid : null };
     });
+    const { notificationUid, ...topup } = result;
+    if (notificationUid) {
+      await deliverBestEffort([() => notifications.notifyTopUpSuccess(notificationUid)]);
+    }
+    return topup;
   }
 
   async function get({ uid, id, reconcile = true }) {
@@ -126,6 +134,7 @@ function createTopupService({ db, gateway, now = () => new Date() }) {
 }
 
 function defaultService() {
-  return createTopupService({ db: require('../../config/firebase').db, gateway: require('./rupio.adapter').defaultAdapter() });
+  return createTopupService({ db: require('../../config/firebase').db, gateway: require('./rupio.adapter').defaultAdapter(),
+    notifications: require('../notifications/notification.service') });
 }
 module.exports = { createTopupService, defaultService, validAmount };

@@ -5,12 +5,25 @@ const { initializeApp, deleteApp } = require('firebase-admin/app');
 const { getFirestore } = require('firebase-admin/firestore');
 const { createTopupService } = require('../../../src/modules/topups/topup.service');
 
+const REQUIRED_EMULATOR_HOST = '127.0.0.1:8188';
+const REQUIRED_PROJECT_ID = 'demo-vpay-test';
+const emulatorIsSafe =
+  process.env.FIRESTORE_EMULATOR_HOST === REQUIRED_EMULATOR_HOST &&
+  process.env.FIRESTORE_EMULATOR_PROJECT_ID === REQUIRED_PROJECT_ID;
+
 test('Firestore transaction credits and records a repeated provider result once', {
-  skip: !process.env.FIRESTORE_EMULATOR_HOST,
+  skip: !emulatorIsSafe,
 }, async () => {
   // Refuse to run this test unless it is explicitly pointed to our local emulator.
-  assert.equal(process.env.FIRESTORE_EMULATOR_HOST, '127.0.0.1:8188');
-  const app = initializeApp({ projectId: 'demo-vpay-topup' }, `topup-test-${randomUUID()}`);
+  assert.equal(process.env.FIRESTORE_EMULATOR_HOST, REQUIRED_EMULATOR_HOST);
+  assert.equal(
+    process.env.FIRESTORE_EMULATOR_PROJECT_ID,
+    REQUIRED_PROJECT_ID,
+  );
+  const app = initializeApp(
+    { projectId: REQUIRED_PROJECT_ID },
+    `topup-test-${randomUUID()}`,
+  );
   const db = getFirestore(app);
   const uid = `customer_${randomUUID()}`;
   const gateway = {
@@ -36,6 +49,17 @@ test('Firestore transaction credits and records a repeated provider result once'
     assert.equal(record.type, 'TOP_UP');
     assert.equal(record.uid, uid);
     assert.equal(record.amount, 120);
+
+    const topupBeforeReplay = (await db.collection('topups').doc(created.id).get()).data();
+    const transactionsBeforeReplay = await db.collection('transactions').where('topupId', '==', created.id).get();
+    assert.equal(transactionsBeforeReplay.size, 1);
+    assert.equal((await service.applyEvent(event)).status, 'SUCCESS');
+    await assert.rejects(service.applyEvent({ ...event, status: 'FAILED' }), { status: 409 });
+    await assert.rejects(service.applyEvent({ ...event, amount: 121 }), { status: 409 });
+    assert.equal((await db.collection('cards').doc(uid).get()).data().balance, 145.5);
+    assert.deepEqual((await db.collection('topups').doc(created.id).get()).data(), topupBeforeReplay);
+    assert.deepEqual((await db.collection('transactions').doc(`topup_${created.id}`).get()).data(), record);
+    assert.equal((await db.collection('transactions').where('topupId', '==', created.id).get()).size, 1);
 
     for (const status of ['FAILED', 'CANCELLED', 'TIMEOUT']) {
       const attempt = await service.start({ uid, amount: 50 });
