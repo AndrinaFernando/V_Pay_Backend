@@ -1,4 +1,8 @@
 const PAYMENT_CURRENCY = 'LKR';
+const DEFAULT_PAYMENT_AMOUNT_LIMITS = Object.freeze({
+  minimumMinor: 1000,
+  maximumMinor: 10000000,
+});
 const DEFAULT_EXPIRY_SECONDS = 15 * 60;
 const MIN_EXPIRY_SECONDS = 60;
 const MAX_EXPIRY_SECONDS = 24 * 60 * 60;
@@ -13,7 +17,10 @@ const ALLOWED_FIELDS = new Set([
   'expiresInSeconds',
 ]);
 
-function validateCreatePaymentIntentInput(body) {
+function validateCreatePaymentIntentInput(
+  body,
+  amountLimits = DEFAULT_PAYMENT_AMOUNT_LIMITS
+) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     return { error: 'Request body must be a JSON object' };
   }
@@ -27,8 +34,14 @@ function validateCreatePaymentIntentInput(body) {
 
   const { amountMinor, currency, description, expiresInSeconds } = body;
 
-  if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) {
-    return { error: 'amountMinor must be a positive safe integer' };
+  if (
+    !Number.isSafeInteger(amountMinor) ||
+    amountMinor < amountLimits.minimumMinor ||
+    amountMinor > amountLimits.maximumMinor
+  ) {
+    return {
+      error: `amountMinor must be an integer from ${amountLimits.minimumMinor} to ${amountLimits.maximumMinor} minor units`,
+    };
   }
 
   if (currency !== PAYMENT_CURRENCY) {
@@ -91,14 +104,43 @@ function validateListPaymentIntentsQuery(query) {
   return { value: { limit } };
 }
 
+function validateListCustomerTransactionsQuery(query) {
+  return validateListPaymentIntentsQuery(query);
+}
+
+function validateListMerchantTransactionsQuery(query) {
+  return validateListPaymentIntentsQuery(query);
+}
+
+function validateConfirmPaymentIntentInput(body) {
+  // An omitted body is supported and is equivalent to an empty JSON object.
+  if (body === undefined) {
+    return { value: {} };
+  }
+
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+    return { error: 'Confirmation request body must be an empty JSON object' };
+  }
+
+  if (Object.keys(body).length > 0) {
+    return { error: 'Confirmation request body must not contain payment data' };
+  }
+
+  return { value: {} };
+}
+
 module.exports = {
   DEFAULT_LIST_LIMIT,
+  DEFAULT_PAYMENT_AMOUNT_LIMITS,
   DEFAULT_EXPIRY_SECONDS,
   MAX_DESCRIPTION_LENGTH,
   MAX_EXPIRY_SECONDS,
   MAX_LIST_LIMIT,
   MIN_EXPIRY_SECONDS,
   PAYMENT_CURRENCY,
+  validateConfirmPaymentIntentInput,
   validateCreatePaymentIntentInput,
+  validateListCustomerTransactionsQuery,
+  validateListMerchantTransactionsQuery,
   validateListPaymentIntentsQuery,
 };
