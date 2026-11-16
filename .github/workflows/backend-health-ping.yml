@@ -1,0 +1,39 @@
+name: VPay Backend Health Ping
+
+on:
+  schedule:
+    - cron: '7,17,27,37,47,57 * * * *'
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ping-backend:
+    name: Check Backend Health
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Ping Render Backend
+        env:
+          BACKEND_URL: ${{ vars.BACKEND_HEALTH_URL }}
+
+        run: |
+          if [ -z "$BACKEND_URL" ]; then
+            echo "ERROR: Backend URL is not configured!"
+            exit 1
+          fi
+
+          echo "Checking VPay Backend..."
+
+          curl --fail \
+               --silent \
+               --show-error \
+               --location \
+               --max-time 120 \
+               --retry 1 \
+               "$BACKEND_URL"
+
+          echo "Backend health check successful!"
