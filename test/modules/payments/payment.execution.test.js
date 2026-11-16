@@ -206,6 +206,21 @@ test('failed QR payment sends no notifications', async () => {
   assert.deepEqual(sent, []);
 });
 
+test('a stalled FCM send does not hold a committed QR payment response', async () => {
+  const sent = [];
+  const scenario = makeScenario({ notifications: {
+    notifyPaymentSuccess: uid => { sent.push(['payer', uid]); return new Promise(() => {}); },
+    notifyPaymentReceived: uid => { sent.push(['merchant', uid]); return new Promise(() => {}); },
+  } });
+  const deadline = new Promise((_, reject) => setTimeout(() => reject(Error('payment response blocked by FCM')), 1500));
+  const result = await Promise.race([confirm(scenario), deadline]);
+  assert.equal(result.outcome, PAYMENT_EXECUTION_OUTCOMES.SUCCEEDED);
+  assert.deepEqual(sent, [['payer', 'customer1'], ['merchant', 'merchant1']]);
+  assert.equal((await confirm(scenario)).idempotent, true);
+  assert.equal(scenario.collections.cards.get('customer1').balance, 874.5);
+  assert.equal(scenario.collections.merchantAccounts.get('merchant1').balanceMinor, 22550);
+});
+
 test('atomically executes a QR payment using integer LKR cents', async () => {
   const scenario = makeScenario();
 

@@ -66,6 +66,20 @@ test('failed top-up never notifies', async () => {
   assert.deepEqual(sent, []);
 });
 
+test('a stalled FCM send does not hold a committed top-up result', async () => {
+  const sent = [];
+  const { db, service } = setup({ notifyTopUpSuccess: uid => {
+    sent.push(uid);
+    return new Promise(() => {});
+  } });
+  await service.start({ uid: 'u1', amount: 100 });
+  const deadline = new Promise((_, reject) => setTimeout(() => reject(Error('top-up response blocked by FCM')), 1500));
+  assert.equal((await Promise.race([service.applyEvent(event), deadline])).status, 'SUCCESS');
+  await service.applyEvent(event);
+  assert.deepEqual(sent, ['u1']);
+  assert.equal(db.records.get('cards/u1').balance, 170.25);
+});
+
 test('verified success credits actual checkout amount and records exactly once, including concurrent duplicate callbacks', async () => {
   const { db, service } = setup();
   await service.start({ uid: 'u1', amount: 100 });

@@ -2,6 +2,7 @@ const {
   PAYMENT_AMOUNT_VALIDATION_OUTCOMES,
   validatePaymentAmount,
 } = require('./payment.amount.validation');
+const { deliverBestEffort } = require('../notifications/notification.delivery');
 const {
   getMaximumPaymentAmountMinor,
 } = require('./payment.limit.provider');
@@ -764,9 +765,9 @@ function createPaymentService({
       };
     });
     if (result.outcome === PAYMENT_EXECUTION_OUTCOMES.SUCCEEDED && !result.idempotent) {
-      await Promise.allSettled([
-        Promise.resolve().then(() => notifications.notifyPaymentSuccess(uid)),
-        Promise.resolve().then(() => notifications.notifyPaymentReceived(result.merchantUid)),
+      await deliverBestEffort([
+        () => notifications.notifyPaymentSuccess(uid),
+        () => notifications.notifyPaymentReceived(result.merchantUid),
       ]);
     }
     const { merchantUid, ...publicResult } = result;

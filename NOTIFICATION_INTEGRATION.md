@@ -220,3 +220,9 @@ after commit but before FCM send can lose the alert, and FCM does not guarantee
 exactly-once presentation. The Android message has a generic OS notification
 with no financial or account details; the app loads authoritative data from
 authenticated APIs after verifying its current binding.
+
+Notification attempts have a 250 ms response budget after commit. If FCM is
+still pending, the payment or webhook response continues while the send is
+observed in the background. The SDK operation cannot be cancelled, and a
+process exit can still lose the alert. Repeated payment requests do not retry
+the alert because the financial result is already terminal.

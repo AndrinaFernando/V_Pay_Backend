@@ -1,4 +1,5 @@
 const crypto = require('node:crypto');
+const { deliverBestEffort } = require('../notifications/notification.delivery');
 
 const FINAL = new Set(['SUCCESS', 'FAILED', 'CANCELLED', 'TIMEOUT']);
 const validAmount = value => Number.isSafeInteger(value) && value > 0 && value <= 1000000;
@@ -98,8 +99,7 @@ function createTopupService({ db, gateway, now = () => new Date(), notifications
     });
     const { notificationUid, ...topup } = result;
     if (notificationUid) {
-      try { await notifications.notifyTopUpSuccess(notificationUid); }
-      catch { console.warn('Top-up notification unavailable.'); }
+      await deliverBestEffort([() => notifications.notifyTopUpSuccess(notificationUid)]);
     }
     return topup;
   }
